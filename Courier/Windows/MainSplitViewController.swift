@@ -12,6 +12,7 @@ final class MainSplitViewController: NSSplitViewController {
     let tabBarVM = TabBarViewModel()
     let requestEditorVM: RequestEditorViewModel
     let inspectorVM = InspectorViewModel()
+    private let requestExecutor = RequestExecutor()
 
     init(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
@@ -69,6 +70,12 @@ final class MainSplitViewController: NSSplitViewController {
             },
             onSelectTab: { [weak self] tab in
                 self?.loadRequestForTab(tab)
+            },
+            onNewTab: { [weak self] in
+                self?.createNewUnsavedTab()
+            },
+            onSend: { [weak self] in
+                self?.sendCurrentRequest()
             }
         )
         let mainAreaHC = NSHostingController(rootView: mainAreaView)
@@ -97,6 +104,62 @@ final class MainSplitViewController: NSSplitViewController {
             requestEditorVM.loadRequest(request)
             inspectorVM.clear()
         }
+    }
+
+    private func sendCurrentRequest() {
+        let url = requestEditorVM.urlString
+        let method = requestEditorVM.method
+        let headers = requestEditorVM.headerRows
+            .filter { $0.isEnabled && !$0.key.isEmpty }
+            .map { (key: $0.key, value: $0.value) }
+        let bodyType = requestEditorVM.bodyType
+        let bodyContent = requestEditorVM.bodyContent
+
+        guard !url.isEmpty else { return }
+
+        inspectorVM.isLoading = true
+        inspectorVM.error = nil
+        inspectorVM.response = nil
+        inspectorVM.isCollapsed = false
+
+        Task {
+            do {
+                let result = try await requestExecutor.execute(
+                    method: method,
+                    urlString: url,
+                    headers: headers,
+                    bodyType: bodyType,
+                    bodyContent: bodyContent
+                )
+                inspectorVM.setResponse(result)
+            } catch is CancellationError {
+                inspectorVM.isLoading = false
+            } catch {
+                inspectorVM.setError(error.localizedDescription)
+            }
+        }
+    }
+
+    private func createNewUnsavedTab() {
+        // Create a new request in the first workspace's first folder (or create one)
+        guard let workspace = sidebarVM.currentWorkspace else { return }
+        let folder: Folder
+        if let first = workspace.folders.first {
+            folder = first
+        } else {
+            let newFolder = Folder(name: "Requests", sortOrder: 0)
+            newFolder.workspace = workspace
+            sharedContext.insert(newFolder)
+            try? sharedContext.save()
+            sidebarVM.fetchWorkspaces()
+            folder = newFolder
+        }
+        let request = APIRequest(name: "New Request", method: "GET", sortOrder: folder.requests.count)
+        request.folder = folder
+        sharedContext.insert(request)
+        try? sharedContext.save()
+        sidebarVM.fetchWorkspaces()
+        handleRequestSelection(request)
     }
 
     func toggleSidebar() {

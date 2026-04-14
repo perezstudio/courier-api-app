@@ -4,6 +4,7 @@ struct TabBarView: View {
     @Bindable var viewModel: TabBarViewModel
     var onCloseTab: (UUID) -> Void
     var onSelectTab: (RequestTab) -> Void
+    var onNewTab: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 0) {
@@ -18,6 +19,19 @@ struct TabBarView: View {
                             onClose: { onCloseTab(tab.id) }
                         )
                     }
+
+                    // New tab button
+                    if let onNewTab {
+                        Button {
+                            onNewTab()
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .buttonStyle(.courierHover(size: .small))
+                        .padding(.leading, 4)
+                    }
                 }
                 .padding(.leading, 4)
             }
@@ -26,6 +40,6 @@ struct TabBarView: View {
             Spacer()
         }
         .frame(height: ContentCardMetrics.tabBarHeight)
-        .padding(.top, 6) // Align with sidebar toolbar
+        .padding(.top, 6)
     }
 }

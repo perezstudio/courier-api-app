@@ -477,51 +477,51 @@ Courier/
 - [x] Chrome-style tab rendering (active tab merges into content card)
 - [x] Inactive tab styling (muted, in window background)
 - [x] Tab close button (on hover)
-- [ ] New tab button (+)
+- [x] New tab button (+)
 - [x] Tab click to switch
 - [ ] Tab drag to reorder
 - [ ] Tab keyboard shortcuts (Cmd+T, Cmd+W)
 - [x] Tab overflow (horizontal scroll with fade edges)
 - [x] Content card internal split (Request Editor | Inspector)
-- [ ] Draggable divider between editor and inspector
-- [ ] Inspector collapse/expand toggle
+- [x] Draggable divider between editor and inspector
+- [x] Inspector collapse/expand toggle
 - [x] Tab ↔ content binding (switch tabs swaps content)
 - [ ] Per-tab state preservation (scroll position, editor state)
 
 ### Phase 4: Request Editor
 - [x] URL bar (method dropdown + URL field + Send button)
-- [ ] URL parsing (auto-extract query params, sync with Params tab)
+- [x] URL parsing (auto-extract query params, sync with Params tab)
 - [x] Section tab bar (Params, Headers, Body, Auth, Variables, Scripts)
-- [ ] Key-value editor component (reusable, enable/disable toggles, add/remove)
-- [ ] Params tab (key-value editor, synced with URL)
-- [ ] Headers tab (key-value editor, common headers autocomplete)
-- [ ] Body type selector (None, JSON, XML, Form Data, URL Encoded, Binary, GraphQL)
-- [ ] Body editor: JSON/XML text editor
-- [ ] Body editor: Form Data key-value editor
-- [ ] Body editor: URL Encoded key-value editor
-- [ ] Body editor: Binary file picker
+- [x] Key-value editor component (reusable, enable/disable toggles, add/remove)
+- [x] Params tab (key-value editor, synced with URL)
+- [x] Headers tab (key-value editor, common headers autocomplete)
+- [x] Body type selector (None, JSON, XML, Form Data, URL Encoded, Binary, GraphQL)
+- [x] Body editor: JSON/XML text editor
+- [x] Body editor: Form Data key-value editor
+- [x] Body editor: URL Encoded key-value editor
+- [x] Body editor: Binary file picker
 - [ ] Body editor: GraphQL query + variables
-- [ ] Auth type selector (None, Bearer, Basic, API Key)
-- [ ] Auth editor: Bearer Token form
-- [ ] Auth editor: Basic Auth form
-- [ ] Auth editor: API Key form
+- [x] Auth type selector (None, Bearer, Basic, API Key)
+- [x] Auth editor: Bearer Token form
+- [x] Auth editor: Basic Auth form
+- [x] Auth editor: API Key form
 - [ ] Auth variable interpolation support ({{variable}})
 
 ### Phase 5: HTTP Execution & Response
-- [ ] RequestExecutor service (URLSession wrapper)
-- [ ] Request timing measurement
+- [x] RequestExecutor service (URLSession wrapper)
+- [x] Request timing measurement
 - [x] ResponseResult model
-- [ ] Send button → execute flow
-- [ ] Loading state (spinner/progress)
+- [x] Send button → execute flow
+- [x] Loading state (spinner/progress)
 - [ ] Cancel in-flight request (Send → Cancel button)
-- [ ] Error handling (timeout, DNS, connection refused, SSL errors)
+- [x] Error handling (timeout, DNS, connection refused, SSL errors)
 - [x] Inspector: status badge (color-coded 2xx/3xx/4xx/5xx)
 - [x] Inspector: duration display
 - [x] Inspector: response size display
-- [ ] Inspector: Body tab (JSON pretty-print + raw toggle)
+- [x] Inspector: Body tab (JSON pretty-print + raw toggle)
 - [ ] Inspector: Body tab (HTML/XML syntax highlighted)
 - [ ] Inspector: Body tab (image inline preview)
-- [ ] Inspector: Headers tab (response headers list)
+- [x] Inspector: Headers tab (response headers list)
 - [ ] Variable interpolation before send (resolve {{var}} from active environment)
 - [ ] Unresolved variable warnings
 

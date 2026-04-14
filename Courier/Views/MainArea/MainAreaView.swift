@@ -6,6 +6,8 @@ struct MainAreaView: View {
     @Bindable var inspectorVM: InspectorViewModel
     var onCloseTab: (UUID) -> Void
     var onSelectTab: (RequestTab) -> Void
+    var onNewTab: (() -> Void)? = nil
+    var onSend: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -16,7 +18,8 @@ struct MainAreaView: View {
                 onSelectTab: { tab in
                     tabBarVM.activeTabId = tab.id
                     onSelectTab(tab)
-                }
+                },
+                onNewTab: onNewTab
             )
 
             // Content card
@@ -25,7 +28,8 @@ struct MainAreaView: View {
             } else {
                 ContentCardView(
                     requestEditorVM: requestEditorVM,
-                    inspectorVM: inspectorVM
+                    inspectorVM: inspectorVM,
+                    onSend: onSend
                 )
             }
 
