@@ -1,0 +1,2 @@
+- [Project Vision](project_vision.md) — Courier: native macOS API client inspired by Bruno, styled after Admiral
+- [Admiral Reference](reference_admiral.md) — Key files and patterns in Mjolnir codebase used as design reference
