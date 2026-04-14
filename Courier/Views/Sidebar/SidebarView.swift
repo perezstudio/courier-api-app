@@ -24,6 +24,7 @@ struct SidebarView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background { VisualEffectBackground(material: .sidebar) }
+        .ignoresSafeArea(edges: .top)
         .sheet(isPresented: $isCreatingWorkspace) {
             newWorkspaceSheet
         }

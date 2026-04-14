@@ -40,6 +40,7 @@ struct MainAreaView: View {
         .padding(.trailing, ContentCardMetrics.padding)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background { VisualEffectBackground(material: .sidebar) }
+        .ignoresSafeArea(edges: .top)
     }
 
     private var emptyContentCard: some View {
