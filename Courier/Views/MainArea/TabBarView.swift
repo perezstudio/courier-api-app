@@ -7,10 +7,10 @@ struct TabBarView: View {
     var onNewTab: (() -> Void)? = nil
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(alignment: .bottom, spacing: 0) {
             // Tabs
             ScrollView(.horizontal) {
-                HStack(spacing: 2) {
+                HStack(alignment: .bottom, spacing: 2) {
                     ForEach(viewModel.tabs) { tab in
                         TabItemView(
                             tab: tab,
@@ -31,15 +31,17 @@ struct TabBarView: View {
                         }
                         .buttonStyle(.courierHover(size: .small))
                         .padding(.leading, 4)
+                        .padding(.bottom, 6)
                     }
                 }
                 .padding(.leading, 4)
             }
+            .scrollClipDisabled()
             .scrollIndicators(.hidden)
 
             Spacer()
         }
-        .frame(height: ContentCardMetrics.tabBarHeight)
+        .frame(height: 32)
         .padding(.top, 6)
     }
 }

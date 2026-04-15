@@ -29,10 +29,10 @@ struct TabItemView: View {
             }
         }
         .padding(.horizontal, 12)
-        .frame(height: 28)
-        .background(
-            tabBackground
-        )
+        .frame(height: isActive ? 32 : 28)
+        .background(tabBackground)
+        .padding(.bottom, isActive ? 0 : 4)
+        .frame(height: 32, alignment: .bottom)
         .contentShape(Rectangle())
         .onTapGesture {
             onSelect()
@@ -47,7 +47,6 @@ struct TabItemView: View {
     @ViewBuilder
     private var tabBackground: some View {
         if isActive {
-            // Active tab: matches content card surface, connects visually
             UnevenRoundedRectangle(
                 topLeadingRadius: 8,
                 bottomLeadingRadius: 0,
@@ -56,7 +55,6 @@ struct TabItemView: View {
             )
             .fill(Color.courierCardSurface)
         } else {
-            // Inactive tab: subtle hover state in window background
             RoundedRectangle(cornerRadius: 6)
                 .fill(Color.primary.opacity(isHovered ? 0.06 : 0))
         }

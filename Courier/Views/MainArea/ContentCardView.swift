@@ -31,12 +31,7 @@ struct ContentCardView: View {
         }
         .background(Color.courierCardSurface)
         .clipShape(
-            UnevenRoundedRectangle(
-                topLeadingRadius: 0,
-                bottomLeadingRadius: ContentCardMetrics.cornerRadius,
-                bottomTrailingRadius: ContentCardMetrics.cornerRadius,
-                topTrailingRadius: ContentCardMetrics.cornerRadius
-            )
+            RoundedRectangle(cornerRadius: ContentCardMetrics.cornerRadius)
         )
     }
 

@@ -21,8 +21,9 @@ struct MainAreaView: View {
                 },
                 onNewTab: onNewTab
             )
+            .zIndex(1)
 
-            // Content card
+            // Content card (pulled up to overlap with active tab)
             if tabBarVM.tabs.isEmpty {
                 emptyContentCard
             } else {
@@ -31,6 +32,8 @@ struct MainAreaView: View {
                     inspectorVM: inspectorVM,
                     onSend: onSend
                 )
+                .padding(.top, -2)
+                .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 2)
             }
 
             // Bottom padding
