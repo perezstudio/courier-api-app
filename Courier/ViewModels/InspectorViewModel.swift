@@ -1,33 +1,36 @@
 import Foundation
+import SwiftData
 
 @Observable
 final class InspectorViewModel {
-    var response: ResponseResult?
-    var isLoading: Bool = false
-    var error: String?
+    var activeRun: APICallRun?
     var selectedTab: InspectorTab = .body
     var isCollapsed: Bool = false
 
+    var isLoading: Bool {
+        guard let run = activeRun else { return false }
+        return run.status == .pending || run.status == .running
+    }
+
     var hasResponse: Bool {
-        response != nil
+        activeRun?.status == .completed
     }
 
-    func setResponse(_ result: ResponseResult) {
-        self.response = result
-        self.error = nil
-        self.isLoading = false
+    var hasError: Bool {
+        activeRun?.status == .failed
     }
 
-    func setError(_ message: String) {
-        self.error = message
-        self.response = nil
-        self.isLoading = false
+    var errorMessage: String? {
+        activeRun?.errorMessage
+    }
+
+    func setActiveRun(_ run: APICallRun) {
+        self.activeRun = run
+        self.isCollapsed = false
     }
 
     func clear() {
-        response = nil
-        error = nil
-        isLoading = false
+        activeRun = nil
     }
 }
 

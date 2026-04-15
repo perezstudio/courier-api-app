@@ -11,6 +11,7 @@ final class APIRequest {
     var folder: Folder?
     @Relationship(deleteRule: .cascade, inverse: \Header.request) var headers: [Header]
     @Relationship(deleteRule: .cascade, inverse: \QueryParam.request) var queryParams: [QueryParam]
+    @Relationship(deleteRule: .cascade, inverse: \APICallRun.request) var runs: [APICallRun]
     var bodyType: String?
     var bodyContent: String?
     var authType: String?
@@ -28,6 +29,7 @@ final class APIRequest {
         self.urlTemplate = urlTemplate
         self.headers = []
         self.queryParams = []
+        self.runs = []
         self.createdAt = Date()
         self.updatedAt = Date()
     }

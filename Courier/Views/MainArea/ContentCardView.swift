@@ -9,7 +9,6 @@ struct ContentCardView: View {
     @State private var isDraggingDivider = false
 
     private let minInspectorWidth: CGFloat = 250
-    private let maxInspectorWidth: CGFloat = 600
     private let minEditorWidth: CGFloat = 350
 
     var body: some View {
@@ -36,8 +35,9 @@ struct ContentCardView: View {
     }
 
     private func clampedInspectorWidth(in totalWidth: CGFloat) -> CGFloat {
+        let maxHalf = totalWidth * 0.5
         let maxAllowed = totalWidth - minEditorWidth - 6 // 6 for divider
-        return min(max(inspectorWidth, minInspectorWidth), min(maxInspectorWidth, maxAllowed))
+        return min(max(inspectorWidth, minInspectorWidth), min(maxHalf, maxAllowed))
     }
 
     // MARK: - Divider
@@ -60,7 +60,7 @@ struct ContentCardView: View {
                     .onChanged { value in
                         isDraggingDivider = true
                         inspectorWidth -= value.translation.width
-                        inspectorWidth = max(minInspectorWidth, min(maxInspectorWidth, inspectorWidth))
+                        inspectorWidth = max(minInspectorWidth, inspectorWidth)
                     }
                     .onEnded { _ in
                         isDraggingDivider = false
@@ -143,98 +143,115 @@ struct ContentCardView: View {
 
     private var inspectorPanel: some View {
         VStack(spacing: 0) {
-            if let response = inspectorVM.response {
-                responseHeader(response)
+            if let run = inspectorVM.activeRun {
+                switch run.status {
+                case .completed, .failed:
+                    if run.statusCode != nil {
+                        inspectorToolbar(run)
+                        Divider()
+                        switch inspectorVM.selectedTab {
+                        case .body:
+                            responseBodyView(run)
+                        case .headers:
+                            responseHeadersView(run)
+                        }
+                    } else {
+                        errorState(run.errorMessage ?? "Unknown error")
+                    }
 
-                Divider()
-
-                // Inspector tabs
-                inspectorTabBar
-
-                Divider()
-
-                // Tab content
-                switch inspectorVM.selectedTab {
-                case .body:
-                    responseBodyView(response)
-                case .headers:
-                    responseHeadersView(response)
+                case .pending, .running:
+                    loadingState
                 }
-            } else if inspectorVM.isLoading {
-                loadingState
-            } else if let error = inspectorVM.error {
-                errorState(error)
             } else {
                 emptyInspectorState
             }
         }
     }
 
-    private func responseHeader(_ response: ResponseResult) -> some View {
-        HStack {
-            Text("\(response.statusCode)")
-                .font(.system(size: 12, weight: .bold, design: .monospaced))
-                .foregroundStyle(statusColor(response.statusCode))
-            Text(response.statusText)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
+    /// Single toolbar matching the content area toolbar height, with status left + tabs right.
+    private func inspectorToolbar(_ run: APICallRun) -> some View {
+        HStack(spacing: 8) {
+            // Left: status code title + metrics subtitle
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 4) {
+                    if let code = run.statusCode {
+                        Text("\(code)")
+                            .font(.system(size: 13, weight: .bold, design: .monospaced))
+                            .foregroundStyle(statusColor(code))
+                    }
+                    if let text = run.statusText {
+                        Text(text)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.primary)
+                    }
+                }
+                HStack(spacing: 6) {
+                    if let duration = run.duration {
+                        Text("\(Int(duration * 1000))ms")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                    if let size = run.size {
+                        Text(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .memory))
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
             Spacer()
-            Text("\(Int(response.duration * 1000))ms")
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(.secondary)
-            Text(ByteCountFormatter.string(fromByteCount: Int64(response.size), countStyle: .memory))
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(.secondary)
+
+            // Right: Body / Headers tabs
+            HStack(spacing: 4) {
+                ForEach(InspectorTab.allCases) { tab in
+                    Button {
+                        inspectorVM.selectedTab = tab
+                    } label: {
+                        Text(tab.rawValue)
+                            .font(.system(size: 11, weight: inspectorVM.selectedTab == tab ? .semibold : .regular))
+                            .foregroundStyle(inspectorVM.selectedTab == tab ? .primary : .secondary)
+                            .padding(.horizontal, 10)
+                            .frame(height: 24)
+                            .background(
+                                RoundedRectangle(cornerRadius: 5)
+                                    .fill(inspectorVM.selectedTab == tab ? Color.primary.opacity(0.08) : Color.clear)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
         }
         .padding(12)
     }
 
-    private var inspectorTabBar: some View {
-        HStack(spacing: 4) {
-            ForEach(InspectorTab.allCases) { tab in
-                Button {
-                    inspectorVM.selectedTab = tab
-                } label: {
-                    Text(tab.rawValue)
-                        .font(.system(size: 11, weight: inspectorVM.selectedTab == tab ? .semibold : .regular))
-                        .foregroundStyle(inspectorVM.selectedTab == tab ? .primary : .secondary)
-                        .padding(.horizontal, 10)
-                        .frame(height: 24)
-                        .background(
-                            RoundedRectangle(cornerRadius: 5)
-                                .fill(inspectorVM.selectedTab == tab ? Color.primary.opacity(0.08) : Color.clear)
-                        )
-                }
-                .buttonStyle(.plain)
-            }
-            Spacer()
+    @ViewBuilder
+    private func responseBodyView(_ run: APICallRun) -> some View {
+        if let bodyString = run.responseBodyString {
+            ResponseTextView(
+                text: bodyString,
+                contentType: run.decodedResponseHeaders["Content-Type"] ?? ""
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let body = run.responseBody {
+            Text("\(body.count) bytes (binary)")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(12)
+        } else {
+            Text("No body")
+                .font(.system(size: 12))
+                .foregroundStyle(.tertiary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(12)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
     }
 
-    private func responseBodyView(_ response: ResponseResult) -> some View {
-        ScrollView {
-            if let bodyString = response.bodyString {
-                Text(bodyString)
-                    .font(.system(size: 12, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
-            } else {
-                Text("\(response.body.count) bytes (binary)")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .padding(12)
-            }
-        }
-        .frame(maxHeight: .infinity)
-    }
-
-    private func responseHeadersView(_ response: ResponseResult) -> some View {
-        ScrollView {
+    private func responseHeadersView(_ run: APICallRun) -> some View {
+        let headers = run.decodedResponseHeaders
+        return ScrollView {
             LazyVStack(spacing: 0) {
-                ForEach(response.headers.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
+                ForEach(headers.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in
                     HStack(alignment: .top) {
                         Text(key)
                             .font(.system(size: 11, weight: .medium, design: .monospaced))

@@ -14,6 +14,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             QueryParam.self,
             Environment.self,
             EnvironmentVariable.self,
+            APICallRun.self,
         ])
 
         let modelConfiguration = ModelConfiguration(

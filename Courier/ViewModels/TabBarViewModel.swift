@@ -6,6 +6,7 @@ struct RequestTab: Identifiable, Equatable {
     let requestId: UUID
     var name: String
     var method: String
+    var activeRunId: UUID?
 }
 
 @Observable
@@ -59,5 +60,14 @@ final class TabBarViewModel {
               destinationIndex >= 0, destinationIndex < tabs.count else { return }
         let tab = tabs.remove(at: sourceIndex)
         tabs.insert(tab, at: destinationIndex)
+    }
+
+    func setActiveRun(_ runId: UUID, forTab tabId: UUID) {
+        guard let index = tabs.firstIndex(where: { $0.id == tabId }) else { return }
+        tabs[index].activeRunId = runId
+    }
+
+    func activeRunId(forTab tabId: UUID) -> UUID? {
+        tabs.first { $0.id == tabId }?.activeRunId
     }
 }

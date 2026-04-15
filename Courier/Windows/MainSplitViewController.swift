@@ -12,7 +12,7 @@ final class MainSplitViewController: NSSplitViewController {
     let tabBarVM = TabBarViewModel()
     let requestEditorVM: RequestEditorViewModel
     let inspectorVM = InspectorViewModel()
-    private let requestExecutor = RequestExecutor()
+    let runService: RunService
 
     init(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
@@ -20,6 +20,7 @@ final class MainSplitViewController: NSSplitViewController {
         self.sharedContext = context
         self.sidebarVM = SidebarViewModel(modelContext: context)
         self.requestEditorVM = RequestEditorViewModel(modelContext: context)
+        self.runService = RunService(modelContainer: modelContainer)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -92,7 +93,7 @@ final class MainSplitViewController: NSSplitViewController {
     private func handleRequestSelection(_ request: APIRequest) {
         tabBarVM.openRequest(request)
         requestEditorVM.loadRequest(request)
-        inspectorVM.clear()
+        restoreRunForActiveTab(request: request)
     }
 
     private func loadRequestForTab(_ tab: RequestTab) {
@@ -102,11 +103,43 @@ final class MainSplitViewController: NSSplitViewController {
         )
         if let request = try? sharedContext.fetch(descriptor).first {
             requestEditorVM.loadRequest(request)
+            restoreRunForActiveTab(request: request)
+        }
+    }
+
+    private func restoreRunForActiveTab(request: APIRequest) {
+        guard let tabId = tabBarVM.activeTabId,
+              let runId = tabBarVM.activeRunId(forTab: tabId) else {
+            // No run tracked for this tab — try to show the most recent run
+            let requestId = request.id
+            let descriptor = FetchDescriptor<APICallRun>(
+                predicate: #Predicate { $0.request?.id == requestId },
+                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+            )
+            if let latestRun = try? sharedContext.fetch(descriptor).first {
+                inspectorVM.setActiveRun(latestRun)
+                if let tabId = tabBarVM.activeTabId {
+                    tabBarVM.setActiveRun(latestRun.id, forTab: tabId)
+                }
+            } else {
+                inspectorVM.clear()
+            }
+            return
+        }
+
+        let descriptor = FetchDescriptor<APICallRun>(
+            predicate: #Predicate { $0.id == runId }
+        )
+        if let run = try? sharedContext.fetch(descriptor).first {
+            inspectorVM.setActiveRun(run)
+        } else {
             inspectorVM.clear()
         }
     }
 
     private func sendCurrentRequest() {
+        guard let request = requestEditorVM.currentRequest else { return }
+
         let url = requestEditorVM.urlString
         let method = requestEditorVM.method
         let headers = requestEditorVM.headerRows
@@ -117,26 +150,21 @@ final class MainSplitViewController: NSSplitViewController {
 
         guard !url.isEmpty else { return }
 
-        inspectorVM.isLoading = true
-        inspectorVM.error = nil
-        inspectorVM.response = nil
-        inspectorVM.isCollapsed = false
+        let run = runService.executeRun(
+            for: request,
+            method: method,
+            urlString: url,
+            headers: headers,
+            bodyType: bodyType,
+            bodyContent: bodyContent,
+            context: sharedContext
+        )
 
-        Task {
-            do {
-                let result = try await requestExecutor.execute(
-                    method: method,
-                    urlString: url,
-                    headers: headers,
-                    bodyType: bodyType,
-                    bodyContent: bodyContent
-                )
-                inspectorVM.setResponse(result)
-            } catch is CancellationError {
-                inspectorVM.isLoading = false
-            } catch {
-                inspectorVM.setError(error.localizedDescription)
-            }
+        inspectorVM.setActiveRun(run)
+
+        // Track this run on the active tab
+        if let tabId = tabBarVM.activeTabId {
+            tabBarVM.setActiveRun(run.id, forTab: tabId)
         }
     }
 
