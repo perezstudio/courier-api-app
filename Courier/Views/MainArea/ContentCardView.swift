@@ -226,18 +226,26 @@ struct ContentCardView: View {
 
     @ViewBuilder
     private func responseBodyView(_ run: APICallRun) -> some View {
-        if let bodyString = run.responseBodyString {
-            ResponseTextView(
-                text: bodyString,
-                contentType: run.decodedResponseHeaders["Content-Type"] ?? ""
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if let body = run.responseBody {
-            Text("\(body.count) bytes (binary)")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
+        if let body = run.responseBody {
+            if body.formattedBody != nil || body.bodyString != nil {
+                ResponseTextView(
+                    formattedData: body.formattedBody,
+                    plainText: body.bodyString
+                )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(12)
+            } else if let rawBody = body.rawBody {
+                Text("\(rawBody.count) bytes (binary)")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(12)
+            } else {
+                Text("No body")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(12)
+            }
         } else {
             Text("No body")
                 .font(.system(size: 12))
@@ -248,7 +256,7 @@ struct ContentCardView: View {
     }
 
     private func responseHeadersView(_ run: APICallRun) -> some View {
-        let headers = run.decodedResponseHeaders
+        let headers = run.responseHeaders?.decoded ?? [:]
         return ScrollView {
             LazyVStack(spacing: 0) {
                 ForEach(headers.sorted(by: { $0.key < $1.key }), id: \.key) { key, value in

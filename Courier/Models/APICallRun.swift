@@ -17,43 +17,39 @@ final class APICallRun {
     var statusRaw: String
     var isStarred: Bool
 
-    // Response
+    // Response metadata (lightweight)
     var statusCode: Int?
     var statusText: String?
-    var responseHeaders: Data?
-    var responseBody: Data?
-    var responseBodyString: String?
     var duration: Double?
     var size: Int?
     var errorMessage: String?
 
-    // Request Snapshot
+    // Request snapshot (lightweight)
     var requestMethod: String
     var requestURL: String
-    var requestHeaders: Data?
-    var requestBody: String?
-    var requestBodyType: String?
 
     // Meta
     var createdAt: Date
+
+    // Heavy data — separate models, faulted in only on access
+    @Relationship(deleteRule: .cascade, inverse: \APICallRunResponseBody.run)
+    var responseBody: APICallRunResponseBody?
+
+    @Relationship(deleteRule: .cascade, inverse: \APICallRunResponseHeaders.run)
+    var responseHeaders: APICallRunResponseHeaders?
+
+    @Relationship(deleteRule: .cascade, inverse: \APICallRunRequestSnapshot.run)
+    var requestSnapshot: APICallRunRequestSnapshot?
 
     var status: RunStatus {
         get { RunStatus(rawValue: statusRaw) ?? .pending }
         set { statusRaw = newValue.rawValue }
     }
 
-    var decodedResponseHeaders: [String: String] {
-        guard let data = responseHeaders else { return [:] }
-        return (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
-    }
-
     init(
         request: APIRequest,
         method: String,
-        url: String,
-        headers: Data? = nil,
-        body: String? = nil,
-        bodyType: String? = nil
+        url: String
     ) {
         self.id = UUID()
         self.request = request
@@ -61,9 +57,6 @@ final class APICallRun {
         self.isStarred = false
         self.requestMethod = method
         self.requestURL = url
-        self.requestHeaders = headers
-        self.requestBody = body
-        self.requestBodyType = bodyType
         self.createdAt = Date()
     }
 }

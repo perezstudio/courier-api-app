@@ -1,9 +1,11 @@
 import AppKit
 
-enum SyntaxLanguage {
+enum SyntaxLanguage: String, CustomStringConvertible {
     case json
-    case xml // covers HTML too
+    case xml
     case plain
+
+    var description: String { rawValue }
 
     static func detect(from contentType: String) -> SyntaxLanguage {
         let ct = contentType.lowercased()
@@ -18,7 +20,7 @@ enum SyntaxLanguage {
 
 enum SyntaxHighlighter {
 
-    // MARK: - Theme (adapts to dark/light mode)
+    // MARK: - Theme
 
     private static var keyColor: NSColor { .systemBlue }
     private static var stringColor: NSColor { .systemGreen }
@@ -37,6 +39,16 @@ enum SyntaxHighlighter {
         case .xml: return highlightXML(text, font: font)
         case .plain: return plainText(text, font: font)
         }
+    }
+
+    /// Archive an NSAttributedString to Data for SwiftData storage.
+    static func archive(_ attributedString: NSAttributedString) -> Data? {
+        try? NSKeyedArchiver.archivedData(withRootObject: attributedString, requiringSecureCoding: false)
+    }
+
+    /// Unarchive Data back to NSAttributedString.
+    static func unarchive(_ data: Data) -> NSAttributedString? {
+        try? NSKeyedUnarchiver.unarchivedObject(ofClass: NSAttributedString.self, from: data)
     }
 
     // MARK: - Plain
@@ -58,33 +70,41 @@ enum SyntaxHighlighter {
         let ns = text as NSString
         let fullRange = NSRange(location: 0, length: ns.length)
 
-        // Strings (keys and values)
+        // Single pass: find all string ranges for O(1) inside-string checks
         let stringPattern = #""(?:[^"\\]|\\.)*""#
-        if let regex = try? NSRegularExpression(pattern: stringPattern) {
-            let matches = regex.matches(in: text, range: fullRange)
-            for match in matches {
-                let range = match.range
-                // Determine if this is a key (followed by optional whitespace then colon)
-                let afterEnd = range.location + range.length
-                var isKey = false
-                if afterEnd < ns.length {
-                    let remaining = ns.substring(from: afterEnd)
-                    let trimmed = remaining.trimmingCharacters(in: .whitespaces)
-                    if trimmed.hasPrefix(":") {
+        guard let stringRegex = try? NSRegularExpression(pattern: stringPattern) else { return result }
+        let stringMatches = stringRegex.matches(in: text, range: fullRange)
+
+        // Build sorted array of string ranges for binary search
+        let stringRanges = stringMatches.map { $0.range }
+
+        // Color strings (keys vs values)
+        for match in stringMatches {
+            let range = match.range
+            let afterEnd = range.location + range.length
+            var isKey = false
+            if afterEnd < ns.length {
+                // Scan forward past whitespace looking for colon
+                var idx = afterEnd
+                while idx < ns.length {
+                    let ch = ns.character(at: idx)
+                    if ch == 0x3A { // ':'
                         isKey = true
+                        break
+                    } else if ch != 0x20 && ch != 0x09 && ch != 0x0A && ch != 0x0D { // not whitespace
+                        break
                     }
+                    idx += 1
                 }
-                result.addAttribute(.foregroundColor, value: isKey ? keyColor : stringColor, range: range)
             }
+            result.addAttribute(.foregroundColor, value: isKey ? keyColor : stringColor, range: range)
         }
 
-        // Numbers (standalone, not inside strings)
+        // Numbers
         let numberPattern = #"(?<=[\s,\[\{:])-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?"#
         if let regex = try? NSRegularExpression(pattern: numberPattern) {
-            let matches = regex.matches(in: text, range: fullRange)
-            for match in matches {
-                // Verify not inside a string by checking if an odd number of unescaped quotes precede
-                if !isInsideString(text: ns, location: match.range.location) {
+            for match in regex.matches(in: text, range: fullRange) {
+                if !isInsideStringRanges(location: match.range.location, stringRanges: stringRanges) {
                     result.addAttribute(.foregroundColor, value: numberColor, range: match.range)
                 }
             }
@@ -93,20 +113,18 @@ enum SyntaxHighlighter {
         // Booleans and null
         let boolNullPattern = #"\b(?:true|false|null)\b"#
         if let regex = try? NSRegularExpression(pattern: boolNullPattern) {
-            let matches = regex.matches(in: text, range: fullRange)
-            for match in matches {
-                if !isInsideString(text: ns, location: match.range.location) {
+            for match in regex.matches(in: text, range: fullRange) {
+                if !isInsideStringRanges(location: match.range.location, stringRanges: stringRanges) {
                     result.addAttribute(.foregroundColor, value: boolNullColor, range: match.range)
                 }
             }
         }
 
-        // Punctuation: { } [ ] : ,
+        // Punctuation
         let punctPattern = #"[\{\}\[\]:,]"#
         if let regex = try? NSRegularExpression(pattern: punctPattern) {
-            let matches = regex.matches(in: text, range: fullRange)
-            for match in matches {
-                if !isInsideString(text: ns, location: match.range.location) {
+            for match in regex.matches(in: text, range: fullRange) {
+                if !isInsideStringRanges(location: match.range.location, stringRanges: stringRanges) {
                     result.addAttribute(.foregroundColor, value: punctuationColor, range: match.range)
                 }
             }
@@ -115,31 +133,22 @@ enum SyntaxHighlighter {
         return result
     }
 
-    /// Quick heuristic: count unescaped quotes before the location
-    private static func isInsideString(text: NSString, location: Int) -> Bool {
-        var quoteCount = 0
-        var i = 0
-        let str = text as String
-        let chars = Array(str.utf16)
-        let quote: UTF16.CodeUnit = 0x22 // "
-        let backslash: UTF16.CodeUnit = 0x5C // \
-
-        while i < location && i < chars.count {
-            if chars[i] == quote {
-                // Check if escaped
-                var backslashes = 0
-                var j = i - 1
-                while j >= 0 && chars[j] == backslash {
-                    backslashes += 1
-                    j -= 1
-                }
-                if backslashes % 2 == 0 {
-                    quoteCount += 1
-                }
+    /// O(log n) binary search into precomputed string ranges.
+    private static func isInsideStringRanges(location: Int, stringRanges: [NSRange]) -> Bool {
+        var lo = 0
+        var hi = stringRanges.count - 1
+        while lo <= hi {
+            let mid = (lo + hi) / 2
+            let range = stringRanges[mid]
+            if location < range.location {
+                hi = mid - 1
+            } else if location >= range.location + range.length {
+                lo = mid + 1
+            } else {
+                return true
             }
-            i += 1
         }
-        return quoteCount % 2 == 1
+        return false
     }
 
     // MARK: - XML / HTML
@@ -152,7 +161,7 @@ enum SyntaxHighlighter {
         let ns = text as NSString
         let fullRange = NSRange(location: 0, length: ns.length)
 
-        // Comments: <!-- ... -->
+        // Comments
         let commentPattern = #"<!--[\s\S]*?-->"#
         if let regex = try? NSRegularExpression(pattern: commentPattern, options: .dotMatchesLineSeparators) {
             for match in regex.matches(in: text, range: fullRange) {
@@ -160,44 +169,40 @@ enum SyntaxHighlighter {
             }
         }
 
-        // Tags: < ... > including closing tags and self-closing
+        // Tags
         let tagPattern = #"</?[\w][\w\-:.]*(?:\s[^>]*)?\s*/?>"#
         if let regex = try? NSRegularExpression(pattern: tagPattern) {
             for match in regex.matches(in: text, range: fullRange) {
                 let tagStr = ns.substring(with: match.range)
+                let tagNS = tagStr as NSString
                 let tagRange = match.range
+                let localRange = NSRange(location: 0, length: tagNS.length)
 
-                // Color the angle brackets and tag name
-                // Tag name pattern within this match
+                // Tag name
                 let namePattern = #"</?[\w][\w\-:.]*"#
-                if let nameRegex = try? NSRegularExpression(pattern: namePattern) {
-                    let localRange = NSRange(location: 0, length: (tagStr as NSString).length)
-                    if let nameMatch = nameRegex.firstMatch(in: tagStr, range: localRange) {
-                        let globalRange = NSRange(
-                            location: tagRange.location + nameMatch.range.location,
-                            length: nameMatch.range.length
-                        )
-                        result.addAttribute(.foregroundColor, value: tagColor, range: globalRange)
-                    }
+                if let nameRegex = try? NSRegularExpression(pattern: namePattern),
+                   let nameMatch = nameRegex.firstMatch(in: tagStr, range: localRange) {
+                    let globalRange = NSRange(
+                        location: tagRange.location + nameMatch.range.location,
+                        length: nameMatch.range.length
+                    )
+                    result.addAttribute(.foregroundColor, value: tagColor, range: globalRange)
                 }
 
-                // Closing bracket(s)
+                // Closing bracket
                 let closingPattern = #"/?>$"#
-                if let closeRegex = try? NSRegularExpression(pattern: closingPattern) {
-                    let localRange = NSRange(location: 0, length: (tagStr as NSString).length)
-                    if let closeMatch = closeRegex.firstMatch(in: tagStr, range: localRange) {
-                        let globalRange = NSRange(
-                            location: tagRange.location + closeMatch.range.location,
-                            length: closeMatch.range.length
-                        )
-                        result.addAttribute(.foregroundColor, value: tagColor, range: globalRange)
-                    }
+                if let closeRegex = try? NSRegularExpression(pattern: closingPattern),
+                   let closeMatch = closeRegex.firstMatch(in: tagStr, range: localRange) {
+                    let globalRange = NSRange(
+                        location: tagRange.location + closeMatch.range.location,
+                        length: closeMatch.range.length
+                    )
+                    result.addAttribute(.foregroundColor, value: tagColor, range: globalRange)
                 }
 
                 // Attribute names
                 let attrNamePattern = #"\s([\w\-:.]+)\s*="#
                 if let attrRegex = try? NSRegularExpression(pattern: attrNamePattern) {
-                    let localRange = NSRange(location: 0, length: (tagStr as NSString).length)
                     for attrMatch in attrRegex.matches(in: tagStr, range: localRange) {
                         if attrMatch.numberOfRanges > 1 {
                             let nameRange = attrMatch.range(at: 1)
@@ -210,10 +215,9 @@ enum SyntaxHighlighter {
                     }
                 }
 
-                // Attribute values (quoted)
+                // Attribute values
                 let attrValuePattern = #"=\s*("[^"]*"|'[^']*')"#
                 if let valRegex = try? NSRegularExpression(pattern: attrValuePattern) {
-                    let localRange = NSRange(location: 0, length: (tagStr as NSString).length)
                     for valMatch in valRegex.matches(in: tagStr, range: localRange) {
                         if valMatch.numberOfRanges > 1 {
                             let valRange = valMatch.range(at: 1)
@@ -228,7 +232,7 @@ enum SyntaxHighlighter {
             }
         }
 
-        // CDATA sections
+        // CDATA
         let cdataPattern = #"<!\[CDATA\[[\s\S]*?\]\]>"#
         if let regex = try? NSRegularExpression(pattern: cdataPattern, options: .dotMatchesLineSeparators) {
             for match in regex.matches(in: text, range: fullRange) {

@@ -1,10 +1,14 @@
 import AppKit
 import SwiftUI
 
-/// A performant read-only text view backed by NSTextView with line numbers and syntax highlighting.
+/// A performant read-only text view backed by NSTextView with line numbers.
+/// Displays pre-formatted (syntax-highlighted) attributed strings when available,
+/// falling back to plain monospaced text.
 struct ResponseTextView: NSViewRepresentable {
-    let text: String
-    var contentType: String = ""
+    /// Pre-formatted NSAttributedString archived as Data (preferred)
+    var formattedData: Data?
+    /// Plain text fallback
+    var plainText: String?
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSTextView.scrollableTextView()
@@ -43,29 +47,43 @@ struct ResponseTextView: NSViewRepresentable {
         scrollView.hasVerticalRuler = true
         scrollView.rulersVisible = true
 
-        applyHighlightedText(to: textView)
+        applyContent(to: textView)
 
         return scrollView
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? NSTextView else { return }
-        if textView.textStorage?.string != text {
-            applyHighlightedText(to: textView)
+
+        let currentText = textView.textStorage?.string ?? ""
+        let newText = plainText ?? ""
+
+        if currentText != newText {
+            applyContent(to: textView)
             textView.scrollToBeginningOfDocument(nil)
 
-            // Refresh gutter
             if let gutter = scrollView.verticalRulerView as? LineNumberGutterView {
                 gutter.needsDisplay = true
             }
         }
     }
 
-    private func applyHighlightedText(to textView: NSTextView) {
+    private func applyContent(to textView: NSTextView) {
+        // Try pre-formatted first
+        if let data = formattedData,
+           let attributed = SyntaxHighlighter.unarchive(data) {
+            textView.textStorage?.setAttributedString(attributed)
+            return
+        }
+
+        // Fall back to plain monospaced text
+        let text = plainText ?? ""
         let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-        let language = SyntaxLanguage.detect(from: contentType)
-        let highlighted = SyntaxHighlighter.highlight(text, language: language, font: font)
-        textView.textStorage?.setAttributedString(highlighted)
+        let plain = NSAttributedString(string: text, attributes: [
+            .font: font,
+            .foregroundColor: NSColor.labelColor,
+        ])
+        textView.textStorage?.setAttributedString(plain)
     }
 }
 
@@ -75,7 +93,6 @@ final class LineNumberGutterView: NSRulerView {
     private weak var textView: NSTextView?
     private let gutterFont = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
     private let gutterTextColor = NSColor.tertiaryLabelColor
-    private let gutterBackgroundColor = NSColor.clear
     private let gutterPadding: CGFloat = 8
 
     init(textView: NSTextView) {
@@ -133,9 +150,6 @@ final class LineNumberGutterView: NSRulerView {
               let layoutManager = textView.layoutManager,
               let textContainer = textView.textContainer else { return }
 
-        gutterBackgroundColor.setFill()
-        rect.fill()
-
         let visibleRect = scrollView?.contentView.bounds ?? .zero
         let visibleGlyphRange = layoutManager.glyphRange(
             forBoundingRect: visibleRect,
@@ -150,7 +164,6 @@ final class LineNumberGutterView: NSRulerView {
         let textInset = textView.textContainerInset
 
         var lineNumber = 1
-        // Count lines before visible range
         content.substring(to: visibleCharRange.location)
             .enumerateLines { _, _ in lineNumber += 1 }
 

@@ -15,6 +15,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             Environment.self,
             EnvironmentVariable.self,
             APICallRun.self,
+            APICallRunResponseBody.self,
+            APICallRunResponseHeaders.self,
+            APICallRunRequestSnapshot.self,
         ])
 
         let modelConfiguration = ModelConfiguration(

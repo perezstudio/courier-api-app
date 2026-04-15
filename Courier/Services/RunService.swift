@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import os.log
 import SwiftData
@@ -25,20 +26,23 @@ final class RunService {
         bodyContent: String?,
         context: ModelContext
     ) -> APICallRun {
-        // Snapshot headers as JSON
-        let headersDict = Dictionary(headers.map { ($0.key, $0.value) }, uniquingKeysWith: { _, last in last })
-        let headersData = try? JSONEncoder().encode(headersDict)
-
-        // Create the run with request snapshot
+        // Create lightweight run
         let run = APICallRun(
             request: request,
             method: method,
-            url: urlString,
-            headers: headersData,
-            body: bodyContent,
-            bodyType: bodyType
+            url: urlString
         )
         context.insert(run)
+
+        // Create request snapshot (heavy, stored separately)
+        let snapshot = APICallRunRequestSnapshot(run: run)
+        let headersDict = Dictionary(headers.map { ($0.key, $0.value) }, uniquingKeysWith: { _, last in last })
+        snapshot.requestHeaders = try? JSONEncoder().encode(headersDict)
+        snapshot.requestBody = bodyContent
+        snapshot.requestBodyType = bodyType
+        context.insert(snapshot)
+        run.requestSnapshot = snapshot
+
         try? context.save()
 
         let runId = run.id
@@ -46,53 +50,85 @@ final class RunService {
 
         logger.info("Run \(runId) created [pending] for \(method) \(urlString)")
 
-        // Execute async — network call is non-blocking, SwiftData updates stay on main context
-        let task = Task { [weak self] in
-            run.status = .running
-            try? context.save()
-            logger.info("Run \(runId) status → running")
+        // Mark as running on MainActor
+        run.status = .running
+        try? context.save()
+        logger.info("Run \(runId) status → running")
 
+        let executor = requestExecutor
+        let task = Task { [weak self] in
+            // 1. Network call — async, does not block main thread
+            let networkResult: ResponseResult
             do {
-                let result = try await self?.requestExecutor.execute(
+                networkResult = try await executor.execute(
                     method: method,
                     urlString: urlString,
                     headers: headers,
                     bodyType: bodyType,
                     bodyContent: bodyContent
                 )
-
-                guard let result else {
-                    run.errorMessage = "Service deallocated"
-                    run.status = .failed
-                    logger.error("Run \(runId) status → failed [service deallocated]")
-                    try? context.save()
-                    return
-                }
-
-                run.statusCode = result.statusCode
-                run.statusText = result.statusText
-                run.responseHeaders = try? JSONEncoder().encode(result.headers)
-                run.responseBody = result.body
-                run.responseBodyString = result.bodyString
-                run.duration = result.duration
-                run.size = result.size
-                run.status = .completed
-                logger.info("Run \(runId) status → completed [\(result.statusCode)] in \(String(format: "%.0f", result.duration * 1000))ms")
             } catch is CancellationError {
-                run.errorMessage = "Cancelled"
-                run.status = .failed
+                await MainActor.run {
+                    run.errorMessage = "Cancelled"
+                    run.status = .failed
+                    try? context.save()
+                }
                 logger.info("Run \(runId) status → failed [cancelled]")
+                return
             } catch {
-                run.errorMessage = error.localizedDescription
-                run.status = .failed
+                await MainActor.run {
+                    run.errorMessage = error.localizedDescription
+                    run.status = .failed
+                    try? context.save()
+                }
                 logger.error("Run \(runId) status → failed: \(error.localizedDescription)")
+                return
             }
 
-            try? context.save()
-            logger.debug("Run \(runId) saved to SwiftData")
+            // 2. Heavy processing — off main thread
+            let contentType = networkResult.headers["Content-Type"] ?? ""
+            let language = SyntaxLanguage.detect(from: contentType)
 
-            // Prune old runs
-            self?.pruneRuns(for: requestId, in: context)
+            let formattedBodyData: Data? = await Task.detached(priority: .userInitiated) {
+                guard let bodyString = networkResult.bodyString else { return nil as Data? }
+                let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+                let highlighted = SyntaxHighlighter.highlight(bodyString, language: language, font: font)
+                let archived = SyntaxHighlighter.archive(highlighted)
+                logger.debug("Run \(runId) syntax highlighting complete (\(language))")
+                return archived
+            }.value
+
+            let encodedHeaders = try? JSONEncoder().encode(networkResult.headers)
+
+            // 3. SwiftData writes — back on MainActor
+            await MainActor.run {
+                // Lightweight metadata
+                run.statusCode = networkResult.statusCode
+                run.statusText = networkResult.statusText
+                run.duration = networkResult.duration
+                run.size = networkResult.size
+
+                // Heavy response body — separate model
+                let responseBodyModel = APICallRunResponseBody(run: run)
+                responseBodyModel.rawBody = networkResult.body
+                responseBodyModel.bodyString = networkResult.bodyString
+                responseBodyModel.formattedBody = formattedBodyData
+                context.insert(responseBodyModel)
+                run.responseBody = responseBodyModel
+
+                // Heavy response headers — separate model
+                let responseHeadersModel = APICallRunResponseHeaders(run: run)
+                responseHeadersModel.headersData = encodedHeaders
+                context.insert(responseHeadersModel)
+                run.responseHeaders = responseHeadersModel
+
+                run.status = .completed
+                try? context.save()
+                logger.info("Run \(runId) status → completed [\(networkResult.statusCode)] in \(String(format: "%.0f", networkResult.duration * 1000))ms")
+
+                // Prune old runs
+                self?.pruneRuns(for: requestId, in: context)
+            }
         }
 
         activeTasks[runId] = task
