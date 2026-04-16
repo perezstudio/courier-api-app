@@ -20,16 +20,18 @@ struct RequestEditorView: View {
                     onSend: { onSend?() }
                 )
 
-                // Inspector toggle
-                Button {
-                    onToggleInspector?()
-                } label: {
-                    Image(systemName: "sidebar.trailing")
-                        .font(.system(size: 12))
-                        .foregroundStyle(inspectorVM.isCollapsed ? .tertiary : .secondary)
+                // Inspector toggle — only visible when inspector is collapsed
+                if inspectorVM.isCollapsed {
+                    Button {
+                        onToggleInspector?()
+                    } label: {
+                        Image(systemName: "sidebar.trailing")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .buttonStyle(.courierHover())
+                    .help("Show Inspector")
                 }
-                .buttonStyle(.courierHover())
-                .help(inspectorVM.isCollapsed ? "Show Inspector" : "Hide Inspector")
             }
             .padding(12)
 

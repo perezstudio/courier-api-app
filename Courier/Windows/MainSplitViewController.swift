@@ -10,17 +10,26 @@ final class MainSplitViewController: NSSplitViewController {
 
     let sidebarVM: SidebarViewModel
     let tabBarVM = TabBarViewModel()
-    let requestEditorVM: RequestEditorViewModel
-    let inspectorVM = InspectorViewModel()
     let runService: RunService
+
+    // Per-tab VM storage
+    private var tabStates: [UUID: TabState] = [:]
+    let activeTabContext: ActiveTabContext
 
     init(modelContainer: ModelContainer) {
         self.modelContainer = modelContainer
         let context = ModelContext(modelContainer)
         self.sharedContext = context
         self.sidebarVM = SidebarViewModel(modelContext: context)
-        self.requestEditorVM = RequestEditorViewModel(modelContext: context)
         self.runService = RunService(modelContainer: modelContainer)
+
+        // Create initial placeholder VMs for ActiveTabContext
+        let initialEditorVM = RequestEditorViewModel(modelContext: context)
+        let initialInspectorVM = InspectorViewModel()
+        self.activeTabContext = ActiveTabContext(
+            editorVM: initialEditorVM,
+            inspectorVM: initialInspectorVM
+        )
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -61,22 +70,22 @@ final class MainSplitViewController: NSSplitViewController {
         // Main Area (tab bar + content card)
         let mainAreaView = MainAreaView(
             tabBarVM: tabBarVM,
-            requestEditorVM: requestEditorVM,
-            inspectorVM: inspectorVM,
+            activeTabContext: activeTabContext,
             onCloseTab: { [weak self] tabId in
                 guard let self else { return }
+                // Remove the tab's VM state
+                self.tabStates.removeValue(forKey: tabId)
                 self.tabBarVM.closeTab(tabId)
                 if let nextTab = self.tabBarVM.activeTab {
-                    // Switch to the next tab's content
-                    self.loadRequestForTab(nextTab)
+                    self.switchToTab(nextTab)
                 } else {
-                    // No tabs left — clear everything
-                    self.requestEditorVM.clearRequest()
-                    self.inspectorVM.clear()
+                    // No tabs left — clear context
+                    self.activeTabContext.editorVM.clearRequest()
+                    self.activeTabContext.inspectorVM.clear()
                 }
             },
             onSelectTab: { [weak self] tab in
-                self?.loadRequestForTab(tab)
+                self?.switchToTab(tab)
             },
             onNewTab: { [weak self] in
                 self?.createNewUnsavedTab()
@@ -98,25 +107,34 @@ final class MainSplitViewController: NSSplitViewController {
 
     private func handleRequestSelection(_ request: APIRequest) {
         tabBarVM.openRequest(request)
-        requestEditorVM.loadRequest(request)
-        // Restore run in background so tab switch is instant
-        restoreRunForActiveTabAsync(request: request)
-    }
 
-    private func loadRequestForTab(_ tab: RequestTab) {
-        let targetId = tab.requestId
-        let descriptor = FetchDescriptor<APIRequest>(
-            predicate: #Predicate { $0.id == targetId }
-        )
-        if let request = try? sharedContext.fetch(descriptor).first {
-            requestEditorVM.loadRequest(request)
-            restoreRunForActiveTabAsync(request: request)
+        guard let tabId = tabBarVM.activeTabId else { return }
+
+        if let existing = tabStates[tabId] {
+            // Tab already has VMs — just switch to it
+            activeTabContext.switchTo(existing)
+        } else {
+            // New tab — create VM pair, load request once
+            let editorVM = RequestEditorViewModel(modelContext: sharedContext)
+            let inspectorVM = InspectorViewModel()
+            let state = TabState(editorVM: editorVM, inspectorVM: inspectorVM)
+            tabStates[tabId] = state
+
+            editorVM.loadRequest(request)
+            activeTabContext.switchTo(state)
+
+            // Restore last run in background
+            restoreRunForTab(tabId: tabId, request: request, inspectorVM: inspectorVM)
         }
     }
 
-    private func restoreRunForActiveTabAsync(request: APIRequest) {
-        let tabId = tabBarVM.activeTabId
-        let trackedRunId = tabId.flatMap { tabBarVM.activeRunId(forTab: $0) }
+    private func switchToTab(_ tab: RequestTab) {
+        guard let state = tabStates[tab.id] else { return }
+        activeTabContext.switchTo(state)
+    }
+
+    private func restoreRunForTab(tabId: UUID, request: APIRequest, inspectorVM: InspectorViewModel) {
+        let trackedRunId = tabBarVM.activeRunId(forTab: tabId)
         let requestId = request.id
         let container = modelContainer
 
@@ -125,13 +143,11 @@ final class MainSplitViewController: NSSplitViewController {
 
             let run: APICallRun?
             if let runId = trackedRunId {
-                // Fetch the tracked run
                 let descriptor = FetchDescriptor<APICallRun>(
                     predicate: #Predicate { $0.id == runId }
                 )
                 run = try? bgContext.fetch(descriptor).first
             } else {
-                // No run tracked — find the most recent
                 let descriptor = FetchDescriptor<APICallRun>(
                     predicate: #Predicate { $0.request?.id == requestId },
                     sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
@@ -144,38 +160,42 @@ final class MainSplitViewController: NSSplitViewController {
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 if let foundRunId {
-                    // Re-fetch on main context so we have a main-thread object
                     let mainDescriptor = FetchDescriptor<APICallRun>(
                         predicate: #Predicate { $0.id == foundRunId }
                     )
                     if let mainRun = try? self.sharedContext.fetch(mainDescriptor).first {
-                        self.inspectorVM.setActiveRun(mainRun)
-                        if let tabId, trackedRunId == nil {
+                        inspectorVM.setActiveRun(mainRun)
+                        if trackedRunId == nil {
                             self.tabBarVM.setActiveRun(mainRun.id, forTab: tabId)
                         }
                     } else {
-                        self.inspectorVM.clear()
+                        inspectorVM.clear()
                     }
                 } else {
-                    self.inspectorVM.clear()
+                    inspectorVM.clear()
                 }
             }
         }
     }
 
     private func sendCurrentRequest() {
-        guard let request = requestEditorVM.currentRequest else { return }
+        let editorVM = activeTabContext.editorVM
+        let inspectorVM = activeTabContext.inspectorVM
 
-        let url = requestEditorVM.urlString
-        let method = requestEditorVM.method
-        let headers = requestEditorVM.headerRows
+        guard let request = editorVM.currentRequest else { return }
+
+        let url = editorVM.urlString
+        let method = editorVM.method
+        let headers = editorVM.headerRows
             .filter { $0.isEnabled && !$0.key.isEmpty }
             .map { (key: $0.key, value: $0.value) }
-        let bodyType = requestEditorVM.bodyType
-        let bodyContent = requestEditorVM.bodyContent
+        let bodyType = editorVM.bodyType
+        let bodyContent = editorVM.bodyContent
 
         guard !url.isEmpty else { return }
 
+        // Capture inspectorVM by value — updates go to this tab's inspector
+        // even if user switches away before request completes
         let run = runService.executeRun(
             for: request,
             method: method,
@@ -184,14 +204,11 @@ final class MainSplitViewController: NSSplitViewController {
             bodyType: bodyType,
             bodyContent: bodyContent,
             context: sharedContext,
-            onStatusChange: { [weak self] in
-                self?.inspectorVM.runDidUpdate()
-            }
+            onStatusChange: { inspectorVM.runDidUpdate() }
         )
 
         inspectorVM.setActiveRun(run)
 
-        // Track this run on the active tab
         if let tabId = tabBarVM.activeTabId {
             tabBarVM.setActiveRun(run.id, forTab: tabId)
         }

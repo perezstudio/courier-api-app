@@ -2,8 +2,7 @@ import SwiftUI
 
 struct MainAreaView: View {
     @Bindable var tabBarVM: TabBarViewModel
-    @Bindable var requestEditorVM: RequestEditorViewModel
-    @Bindable var inspectorVM: InspectorViewModel
+    @Bindable var activeTabContext: ActiveTabContext
     var onCloseTab: (UUID) -> Void
     var onSelectTab: (RequestTab) -> Void
     var onNewTab: (() -> Void)? = nil
@@ -28,8 +27,7 @@ struct MainAreaView: View {
                 emptyContentCard
             } else {
                 ContentCardControllerView(
-                    requestEditorVM: requestEditorVM,
-                    inspectorVM: inspectorVM,
+                    activeTabContext: activeTabContext,
                     onSend: onSend
                 )
                 .clipShape(RoundedRectangle(cornerRadius: ContentCardMetrics.cornerRadius))

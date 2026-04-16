@@ -3,7 +3,8 @@ import AppKit
 /// Pure AppKit inspector panel. Observes InspectorViewModel via withObservationTracking
 /// and updates views imperatively — no SwiftUI diffing overhead.
 final class InspectorViewController: NSViewController {
-    let viewModel: InspectorViewModel
+    var viewModel: InspectorViewModel
+    var onToggleInspector: (() -> Void)?
 
     // MARK: - Subviews
 
@@ -438,9 +439,21 @@ final class InspectorViewController: NSViewController {
         ])
     }
 
+    // MARK: - Per-Tab VM Switching
+
+    func setViewModel(_ newVM: InspectorViewModel) {
+        viewModel = newVM
+        clearBodyState()
+        updateContent()
+        startObserving()
+    }
+
     private func setupToolbarActions() {
         toolbarView.onTabChanged = { [weak self] tab in
             self?.viewModel.selectedTab = tab
+        }
+        toolbarView.onToggleInspector = { [weak self] in
+            self?.onToggleInspector?()
         }
     }
 
