@@ -237,6 +237,7 @@ final class InspectorViewController: NSViewController {
 
     private func showEmptyState() {
         hideAllStates()
+        clearBodyState()
         emptyContainer.isHidden = false
     }
 
@@ -248,6 +249,20 @@ final class InspectorViewController: NSViewController {
         loadingContainer.isHidden = true
         errorContainer.isHidden = true
         emptyContainer.isHidden = true
+    }
+
+    /// Release all heavy text content and associated state.
+    private func clearBodyState() {
+        pendingBodyWorkItem?.cancel()
+        pendingBodyWorkItem = nil
+        removeScrollObserver()
+        lastRunId = nil
+        lastAppearance = nil
+        highlighter = nil
+        highlightedRanges = IndexSet()
+        lineStartOffsets = [0]
+        bodyTextView.textStorage?.setAttributedString(NSAttributedString())
+        headersVC.setHeaders([:])
     }
 
     // MARK: - Text View Setup (transplanted from ResponseTextView)

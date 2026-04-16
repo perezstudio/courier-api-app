@@ -64,9 +64,15 @@ final class MainSplitViewController: NSSplitViewController {
             requestEditorVM: requestEditorVM,
             inspectorVM: inspectorVM,
             onCloseTab: { [weak self] tabId in
-                self?.tabBarVM.closeTab(tabId)
-                if self?.tabBarVM.activeTab == nil {
-                    self?.requestEditorVM.clearRequest()
+                guard let self else { return }
+                self.tabBarVM.closeTab(tabId)
+                if let nextTab = self.tabBarVM.activeTab {
+                    // Switch to the next tab's content
+                    self.loadRequestForTab(nextTab)
+                } else {
+                    // No tabs left — clear everything
+                    self.requestEditorVM.clearRequest()
+                    self.inspectorVM.clear()
                 }
             },
             onSelectTab: { [weak self] tab in
