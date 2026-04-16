@@ -8,10 +8,8 @@ final class APICallRunResponseBody {
 
     /// Raw response bytes
     var rawBody: Data?
-    /// Plain pretty-printed text (fallback display)
+    /// Plain pretty-printed text
     var bodyString: String?
-    /// Pre-highlighted NSAttributedString archived as Data
-    var formattedBody: Data?
 
     init(run: APICallRun) {
         self.id = UUID()

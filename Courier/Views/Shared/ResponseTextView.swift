@@ -2,13 +2,14 @@ import AppKit
 import SwiftUI
 
 /// A performant read-only text view backed by NSTextView with line numbers.
-/// Displays pre-formatted (syntax-highlighted) attributed strings when available,
-/// falling back to plain monospaced text.
+/// Uses scroll-driven lazy syntax highlighting — only the visible viewport is highlighted.
 struct ResponseTextView: NSViewRepresentable {
-    /// Pre-formatted NSAttributedString archived as Data (preferred)
-    var formattedData: Data?
-    /// Plain text fallback
     var plainText: String?
+    var contentType: String?
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSTextView.scrollableTextView()
@@ -47,7 +48,7 @@ struct ResponseTextView: NSViewRepresentable {
         scrollView.hasVerticalRuler = true
         scrollView.rulersVisible = true
 
-        applyContent(to: textView)
+        applyContent(to: textView, coordinator: context.coordinator)
 
         return scrollView
     }
@@ -55,35 +56,135 @@ struct ResponseTextView: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? NSTextView else { return }
 
-        let currentText = textView.textStorage?.string ?? ""
         let newText = plainText ?? ""
+        let currentAppearance = NSApp.effectiveAppearance.name
+        let appearanceChanged = context.coordinator.lastAppearance != currentAppearance
+        let textChanged = context.coordinator.lastText != newText
 
-        if currentText != newText {
-            applyContent(to: textView)
-            textView.scrollToBeginningOfDocument(nil)
-
-            if let gutter = scrollView.verticalRulerView as? LineNumberGutterView {
-                gutter.needsDisplay = true
+        if textChanged {
+            context.coordinator.lastAppearance = currentAppearance
+            context.coordinator.lastText = newText
+            applyContent(to: textView, coordinator: context.coordinator)
+        } else if appearanceChanged {
+            context.coordinator.lastAppearance = currentAppearance
+            // Rebuild highlighter with new theme, reset highlighted ranges, re-highlight visible
+            context.coordinator.resetHighlighting(contentType: contentType)
+            if let textStorage = textView.textStorage {
+                let theme = SyntaxTheme.current()
+                textStorage.beginEditing()
+                textStorage.addAttributes([
+                    .foregroundColor: theme.defaultColor,
+                    .font: theme.font,
+                ], range: NSRange(location: 0, length: textStorage.length))
+                textStorage.endEditing()
             }
+            Self.highlightVisibleRange(textView: textView, coordinator: context.coordinator)
         }
     }
 
-    private func applyContent(to textView: NSTextView) {
-        // Try pre-formatted first
-        if let data = formattedData,
-           let attributed = SyntaxHighlighter.unarchive(data) {
-            textView.textStorage?.setAttributedString(attributed)
-            return
-        }
-
-        // Fall back to plain monospaced text
+    private func applyContent(to textView: NSTextView, coordinator: Coordinator) {
         let text = plainText ?? ""
         let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+
+        // Remove old scroll observer
+        coordinator.removeScrollObserver()
+
+        // Set plain text immediately
         let plain = NSAttributedString(string: text, attributes: [
             .font: font,
             .foregroundColor: NSColor.labelColor,
         ])
         textView.textStorage?.setAttributedString(plain)
+        textView.scrollToBeginningOfDocument(nil)
+
+        if let gutter = textView.enclosingScrollView?.verticalRulerView as? LineNumberGutterView {
+            gutter.needsDisplay = true
+        }
+
+        // Set up lazy highlighting
+        coordinator.resetHighlighting(contentType: contentType)
+
+        guard !text.isEmpty else { return }
+
+        // Highlight initial visible range
+        Self.highlightVisibleRange(textView: textView, coordinator: coordinator)
+
+        // Observe scroll to highlight new ranges
+        if let contentView = textView.enclosingScrollView?.contentView {
+            contentView.postsBoundsChangedNotifications = true
+            coordinator.scrollObserver = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: contentView,
+                queue: .main
+            ) { [weak textView] _ in
+                guard let textView else { return }
+                Self.highlightVisibleRange(textView: textView, coordinator: coordinator)
+            }
+        }
+    }
+
+    /// Highlights only the visible range (with buffer) that hasn't been highlighted yet.
+    private static func highlightVisibleRange(textView: NSTextView, coordinator: Coordinator) {
+        guard let highlighter = coordinator.highlighter,
+              let layoutManager = textView.layoutManager,
+              let textContainer = textView.textContainer,
+              let textStorage = textView.textStorage,
+              textStorage.length > 0 else { return }
+
+        let scrollView = textView.enclosingScrollView
+        let visibleRect = scrollView?.contentView.bounds ?? textView.visibleRect
+
+        let visibleGlyphRange = layoutManager.glyphRange(forBoundingRect: visibleRect, in: textContainer)
+        let visibleCharRange = layoutManager.characterRange(forGlyphRange: visibleGlyphRange, actualGlyphRange: nil)
+
+        // Add buffer of 2000 chars on each side for smooth scrolling
+        let bufferSize = 2000
+        let start = max(0, visibleCharRange.location - bufferSize)
+        let end = min(textStorage.length, NSMaxRange(visibleCharRange) + bufferSize)
+        let bufferedRange = NSRange(location: start, length: end - start)
+
+        // Check which parts of this range haven't been highlighted yet
+        let bufferedSet = IndexSet(integersIn: bufferedRange.location ..< NSMaxRange(bufferedRange))
+        let unhighlighted = bufferedSet.subtracting(coordinator.highlightedRanges)
+
+        guard !unhighlighted.isEmpty else { return }
+
+        // Highlight each contiguous subrange
+        for range in unhighlighted.rangeView {
+            let nsRange = NSRange(location: range.lowerBound, length: range.count)
+            highlighter.highlight(textStorage, in: nsRange)
+        }
+
+        // Mark as highlighted
+        coordinator.highlightedRanges.formUnion(bufferedSet)
+    }
+
+    // MARK: - Coordinator
+
+    final class Coordinator {
+        var lastAppearance: NSAppearance.Name?
+        var lastText: String?
+        var highlighter: SyntaxHighlighter?
+        var highlightedRanges = IndexSet()
+        var scrollObserver: NSObjectProtocol?
+
+        func resetHighlighting(contentType: String?) {
+            highlightedRanges = IndexSet()
+            let theme = SyntaxTheme.current()
+            let language = SyntaxLanguage.detect(from: contentType ?? "")
+            highlighter = SyntaxHighlighter(theme: theme, language: language)
+        }
+
+        func removeScrollObserver() {
+            if let observer = scrollObserver {
+                NotificationCenter.default.removeObserver(observer)
+                scrollObserver = nil
+            }
+        }
+
+        deinit {
+            removeScrollObserver()
+        }
     }
 }
 

@@ -227,10 +227,10 @@ struct ContentCardView: View {
     @ViewBuilder
     private func responseBodyView(_ run: APICallRun) -> some View {
         if let body = run.responseBody {
-            if body.formattedBody != nil || body.bodyString != nil {
+            if body.bodyString != nil {
                 ResponseTextView(
-                    formattedData: body.formattedBody,
-                    plainText: body.bodyString
+                    plainText: body.bodyString,
+                    contentType: run.responseHeaders?.decoded["Content-Type"]
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let rawBody = body.rawBody {

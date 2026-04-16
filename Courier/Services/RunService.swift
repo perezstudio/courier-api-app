@@ -85,19 +85,7 @@ final class RunService {
                 return
             }
 
-            // 2. Heavy processing — off main thread
-            let contentType = networkResult.headers["Content-Type"] ?? ""
-            let language = SyntaxLanguage.detect(from: contentType)
-
-            let formattedBodyData: Data? = await Task.detached(priority: .userInitiated) {
-                guard let bodyString = networkResult.bodyString else { return nil as Data? }
-                let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-                let highlighted = SyntaxHighlighter.highlight(bodyString, language: language, font: font)
-                let archived = SyntaxHighlighter.archive(highlighted)
-                logger.debug("Run \(runId) syntax highlighting complete (\(language))")
-                return archived
-            }.value
-
+            // 2. Encode headers off main thread
             let encodedHeaders = try? JSONEncoder().encode(networkResult.headers)
 
             // 3. SwiftData writes — back on MainActor
@@ -112,7 +100,6 @@ final class RunService {
                 let responseBodyModel = APICallRunResponseBody(run: run)
                 responseBodyModel.rawBody = networkResult.body
                 responseBodyModel.bodyString = networkResult.bodyString
-                responseBodyModel.formattedBody = formattedBodyData
                 context.insert(responseBodyModel)
                 run.responseBody = responseBodyModel
 
