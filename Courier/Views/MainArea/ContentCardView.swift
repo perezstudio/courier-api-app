@@ -22,8 +22,8 @@ struct ContentCardView: View {
                     // Draggable divider
                     dividerHandle
 
-                    // Inspector (right side)
-                    inspectorPanel
+                    // Inspector (right side) — isolated from requestEditorVM observation
+                    InspectorPanelView(inspectorVM: inspectorVM)
                         .frame(width: clampedInspectorWidth(in: geo.size.width))
                 }
             }
@@ -138,10 +138,16 @@ struct ContentCardView: View {
             .frame(maxHeight: .infinity)
         }
     }
+}
 
-    // MARK: - Inspector
+// MARK: - Inspector Panel (isolated observation domain)
 
-    private var inspectorPanel: some View {
+/// Extracted into its own view so it only re-evaluates when inspectorVM changes,
+/// not when requestEditorVM properties change.
+struct InspectorPanelView: View {
+    @Bindable var inspectorVM: InspectorViewModel
+
+    var body: some View {
         VStack(spacing: 0) {
             if let run = inspectorVM.activeRun {
                 switch run.status {
@@ -168,10 +174,8 @@ struct ContentCardView: View {
         }
     }
 
-    /// Single toolbar matching the content area toolbar height, with status left + tabs right.
     private func inspectorToolbar(_ run: APICallRun) -> some View {
         HStack(spacing: 8) {
-            // Left: status code title + metrics subtitle
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 4) {
                     if let code = run.statusCode {
@@ -201,7 +205,6 @@ struct ContentCardView: View {
 
             Spacer()
 
-            // Right: Body / Headers tabs
             HStack(spacing: 4) {
                 ForEach(InspectorTab.allCases) { tab in
                     Button {
@@ -227,12 +230,21 @@ struct ContentCardView: View {
     @ViewBuilder
     private func responseBodyView(_ run: APICallRun) -> some View {
         if let body = run.responseBody {
-            if body.bodyString != nil {
-                ResponseTextView(
-                    plainText: body.bodyString,
+            if let bodyString = body.bodyString {
+                let textView = ResponseTextView(
+                    plainText: bodyString,
                     contentType: run.responseHeaders?.decoded["Content-Type"]
                 )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                VStack(spacing: 0) {
+                    if textView.isTruncated {
+                        truncationBanner(
+                            showing: ResponseTextView.displayCharLimit,
+                            totalSize: bodyString.utf8.count
+                        )
+                    }
+                    textView
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             } else if let rawBody = body.rawBody {
                 Text("\(rawBody.count) bytes (binary)")
                     .font(.system(size: 12))
@@ -253,6 +265,20 @@ struct ContentCardView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(12)
         }
+    }
+
+    private func truncationBanner(showing limit: Int, totalSize: Int) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: "info.circle")
+                .font(.system(size: 10))
+            Text("Showing first \(ByteCountFormatter.string(fromByteCount: Int64(limit), countStyle: .memory)) of \(ByteCountFormatter.string(fromByteCount: Int64(totalSize), countStyle: .memory))")
+                .font(.system(size: 11))
+        }
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.primary.opacity(0.04))
     }
 
     private func responseHeadersView(_ run: APICallRun) -> some View {
@@ -321,8 +347,6 @@ struct ContentCardView: View {
         }
         .frame(maxWidth: .infinity)
     }
-
-    // MARK: - Helpers
 
     private func statusColor(_ code: Int) -> Color {
         switch code {

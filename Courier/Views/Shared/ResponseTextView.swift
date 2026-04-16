@@ -3,9 +3,28 @@ import SwiftUI
 
 /// A performant read-only text view backed by NSTextView with line numbers.
 /// Uses scroll-driven lazy syntax highlighting — only the visible viewport is highlighted.
+/// Large responses are truncated for display to avoid layout stalls.
 struct ResponseTextView: NSViewRepresentable {
     var plainText: String?
     var contentType: String?
+
+    static let displayCharLimit = 500_000
+
+    var isTruncated: Bool {
+        guard let text = plainText else { return false }
+        return text.count > Self.displayCharLimit
+    }
+
+    private var displayText: String {
+        guard let text = plainText else { return "" }
+        guard text.count > Self.displayCharLimit else { return text }
+        let endIndex = text.index(text.startIndex, offsetBy: Self.displayCharLimit)
+        let truncated = text[text.startIndex ..< endIndex]
+        if let lastNewline = truncated.lastIndex(of: "\n") {
+            return String(truncated[truncated.startIndex ... lastNewline])
+        }
+        return String(truncated)
+    }
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
@@ -59,7 +78,14 @@ struct ResponseTextView: NSViewRepresentable {
         let newText = plainText ?? ""
         let currentAppearance = NSApp.effectiveAppearance.name
         let appearanceChanged = context.coordinator.lastAppearance != currentAppearance
-        let textChanged = context.coordinator.lastText != newText
+
+        // Fast-path: check length first before expensive full string comparison
+        let textChanged: Bool
+        if let lastText = context.coordinator.lastText {
+            textChanged = lastText.count != newText.count || lastText != newText
+        } else {
+            textChanged = !newText.isEmpty
+        }
 
         if textChanged {
             context.coordinator.lastAppearance = currentAppearance
@@ -67,7 +93,6 @@ struct ResponseTextView: NSViewRepresentable {
             applyContent(to: textView, coordinator: context.coordinator)
         } else if appearanceChanged {
             context.coordinator.lastAppearance = currentAppearance
-            // Rebuild highlighter with new theme, reset highlighted ranges, re-highlight visible
             context.coordinator.resetHighlighting(contentType: contentType)
             if let textStorage = textView.textStorage {
                 let theme = SyntaxTheme.current()
@@ -83,11 +108,14 @@ struct ResponseTextView: NSViewRepresentable {
     }
 
     private func applyContent(to textView: NSTextView, coordinator: Coordinator) {
-        let text = plainText ?? ""
+        let text = displayText
         let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
 
         // Remove old scroll observer
         coordinator.removeScrollObserver()
+
+        // Build line index for O(log n) gutter lookups
+        coordinator.rebuildLineIndex(for: text)
 
         // Set plain text immediately
         let plain = NSAttributedString(string: text, attributes: [
@@ -98,6 +126,7 @@ struct ResponseTextView: NSViewRepresentable {
         textView.scrollToBeginningOfDocument(nil)
 
         if let gutter = textView.enclosingScrollView?.verticalRulerView as? LineNumberGutterView {
+            gutter.lineStartOffsets = coordinator.lineStartOffsets
             gutter.needsDisplay = true
         }
 
@@ -167,6 +196,24 @@ struct ResponseTextView: NSViewRepresentable {
         var highlighter: SyntaxHighlighter?
         var highlightedRanges = IndexSet()
         var scrollObserver: NSObjectProtocol?
+        var lineStartOffsets: [Int] = [0]
+
+        /// Build sorted array of character offsets for each line start.
+        func rebuildLineIndex(for text: String) {
+            var offsets = [0]
+            let ns = text as NSString
+            var index = 0
+            while index < ns.length {
+                let lineRange = ns.lineRange(for: NSRange(location: index, length: 0))
+                let nextLineStart = NSMaxRange(lineRange)
+                if nextLineStart > index, nextLineStart < ns.length {
+                    offsets.append(nextLineStart)
+                }
+                index = nextLineStart
+                if index == lineRange.location { break }
+            }
+            lineStartOffsets = offsets
+        }
 
         func resetHighlighting(contentType: String?) {
             highlightedRanges = IndexSet()
@@ -195,6 +242,9 @@ final class LineNumberGutterView: NSRulerView {
     private let gutterFont = NSFont.monospacedDigitSystemFont(ofSize: 10, weight: .regular)
     private let gutterTextColor = NSColor.tertiaryLabelColor
     private let gutterPadding: CGFloat = 8
+
+    /// Pre-computed line start offsets for O(log n) line number lookup.
+    var lineStartOffsets: [Int] = [0]
 
     init(textView: NSTextView) {
         self.textView = textView
@@ -235,8 +285,7 @@ final class LineNumberGutterView: NSRulerView {
     }
 
     private func updateThickness() {
-        guard let textView else { return }
-        let lineCount = max(textView.string.components(separatedBy: "\n").count, 1)
+        let lineCount = max(lineStartOffsets.count, 1)
         let digits = max(String(lineCount).count, 2)
         let sampleString = String(repeating: "8", count: digits) as NSString
         let size = sampleString.size(withAttributes: [.font: gutterFont])
@@ -244,6 +293,20 @@ final class LineNumberGutterView: NSRulerView {
         if abs(ruleThickness - newThickness) > 1 {
             ruleThickness = newThickness
         }
+    }
+
+    /// Binary search: find 1-based line number for a character offset.
+    private func lineNumber(forCharOffset offset: Int) -> Int {
+        var lo = 0, hi = lineStartOffsets.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if lineStartOffsets[mid] <= offset {
+                lo = mid + 1
+            } else {
+                hi = mid
+            }
+        }
+        return lo // 1-based: count of offsets <= charOffset
     }
 
     override func drawHashMarksAndLabels(in rect: NSRect) {
@@ -264,9 +327,8 @@ final class LineNumberGutterView: NSRulerView {
         let content = textView.string as NSString
         let textInset = textView.textContainerInset
 
-        var lineNumber = 1
-        content.substring(to: visibleCharRange.location)
-            .enumerateLines { _, _ in lineNumber += 1 }
+        // O(log n) line number lookup instead of O(n) scan
+        var currentLineNumber = lineNumber(forCharOffset: visibleCharRange.location)
 
         let attrs: [NSAttributedString.Key: Any] = [
             .font: gutterFont,
@@ -286,7 +348,7 @@ final class LineNumberGutterView: NSRulerView {
                 in: textContainer
             )
 
-            let label = "\(lineNumber)" as NSString
+            let label = "\(currentLineNumber)" as NSString
             let labelSize = label.size(withAttributes: attrs)
             let yPos = lineRect.origin.y + textInset.height - visibleRect.origin.y
                 + (lineRect.height - labelSize.height) / 2
@@ -299,7 +361,7 @@ final class LineNumberGutterView: NSRulerView {
                 withAttributes: attrs
             )
 
-            lineNumber += 1
+            currentLineNumber += 1
             index = NSMaxRange(lineRange)
         }
     }
