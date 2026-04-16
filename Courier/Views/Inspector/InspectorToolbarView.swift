@@ -194,7 +194,7 @@ private final class HoverIconButtonView: NSView {
     }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: 28, height: 28)
+        NSSize(width: 30, height: 30)
     }
 
     override func updateTrackingAreas() {
@@ -265,7 +265,7 @@ private final class InspectorTabButtonView: NSView {
     override var intrinsicContentSize: NSSize {
         let font = NSFont.systemFont(ofSize: 12, weight: .semibold)
         let size = (title as NSString).size(withAttributes: [.font: font])
-        return NSSize(width: ceil(size.width) + 24, height: 28)
+        return NSSize(width: ceil(size.width) + 24, height: 30)
     }
 
     override func updateTrackingAreas() {
