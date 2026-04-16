@@ -67,6 +67,12 @@ final class TabBarViewModel {
         tabs[index].activeRunId = runId
     }
 
+    func updateMethod(_ method: String, forTab tabId: UUID) {
+        guard let index = tabs.firstIndex(where: { $0.id == tabId }) else { return }
+        guard tabs[index].method != method else { return }
+        tabs[index].method = method
+    }
+
     func activeRunId(forTab tabId: UUID) -> UUID? {
         tabs.first { $0.id == tabId }?.activeRunId
     }

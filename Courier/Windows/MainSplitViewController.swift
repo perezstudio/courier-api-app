@@ -45,6 +45,24 @@ final class MainSplitViewController: NSSplitViewController {
         splitView.isVertical = true
 
         setupViewControllers()
+        observeActiveEditorMethod()
+    }
+
+    /// Observes the active tab's editor VM method so the tab badge stays in sync
+    /// when the user changes the method via the picker. Re-establishes itself on each fire.
+    private func observeActiveEditorMethod() {
+        withObservationTracking {
+            // Track the active editor VM identity AND its method
+            _ = activeTabContext.editorVM.method
+        } onChange: { [weak self] in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let tabId = self.tabBarVM.activeTabId {
+                    self.tabBarVM.updateMethod(self.activeTabContext.editorVM.method, forTab: tabId)
+                }
+                self.observeActiveEditorMethod()
+            }
+        }
     }
 
     private func setupViewControllers() {

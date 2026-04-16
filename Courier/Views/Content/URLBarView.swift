@@ -7,37 +7,14 @@ struct URLBarView: View {
     var onURLChange: (String) -> Void
     var onSend: () -> Void
 
-    private let methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+    @State private var isURLHovered = false
 
     var body: some View {
         HStack(spacing: 8) {
-            // Method picker
-            Menu {
-                ForEach(methods, id: \.self) { m in
-                    Button {
-                        method = m
-                        onMethodChange(m)
-                    } label: {
-                        Text(m)
-                    }
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    MethodBadge(method: method)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8))
-                        .foregroundStyle(.tertiary)
-                }
-                .padding(.horizontal, 8)
+            // Method picker — AppKit-backed, opens NSMenu
+            MethodPickerView(method: $method, onMethodChange: onMethodChange)
+                .fixedSize()
                 .frame(height: 30)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.primary.opacity(0.05))
-                )
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
 
             // URL field
             TextField("Enter URL...", text: $urlString)
@@ -47,8 +24,13 @@ struct URLBarView: View {
                 .frame(height: 30)
                 .background(
                     RoundedRectangle(cornerRadius: 6)
-                        .fill(Color.primary.opacity(0.05))
+                        .fill(Color.primary.opacity(isURLHovered ? 0.08 : 0.05))
                 )
+                .onHover { hovering in
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        isURLHovered = hovering
+                    }
+                }
                 .onSubmit {
                     onURLChange(urlString)
                     onSend()
@@ -62,11 +44,31 @@ struct URLBarView: View {
                 Image(systemName: "paperplane.fill")
                     .font(.system(size: 12))
                     .foregroundStyle(.white)
+                    .frame(width: 30, height: 30)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .frame(width: 30, height: 30)
-            .background(Color.accentColor)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .buttonStyle(SendButtonStyle())
         }
+    }
+}
+
+/// Filled accent button with hover/press feedback. Hit area covers full frame.
+private struct SendButtonStyle: ButtonStyle {
+    @State private var isHovered = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.accentColor.opacity(
+                        configuration.isPressed ? 0.75 :
+                        isHovered ? 0.85 : 1.0
+                    ))
+            )
+            .onHover { hovering in
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    isHovered = hovering
+                }
+            }
     }
 }

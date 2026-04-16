@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct MethodBadge: View {
@@ -19,15 +20,24 @@ struct MethodBadge: View {
     }
 
     private var methodColor: Color {
+        Color(nsColor: HTTPMethod.color(for: method))
+    }
+}
+
+/// Shared color/label resolver for HTTP methods — used by SwiftUI badges and AppKit picker.
+enum HTTPMethod {
+    static let all = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]
+
+    static func color(for method: String) -> NSColor {
         switch method.uppercased() {
-        case "GET": return .green
-        case "POST": return .orange
-        case "PUT": return .blue
-        case "PATCH": return .purple
-        case "DELETE": return .red
-        case "HEAD": return .teal
-        case "OPTIONS": return .gray
-        default: return .secondary
+        case "GET": return .systemGreen
+        case "POST": return .systemYellow
+        case "PUT": return .systemBlue
+        case "PATCH": return .systemPurple
+        case "DELETE": return .systemRed
+        case "HEAD": return .systemTeal
+        case "OPTIONS": return .systemPink
+        default: return .secondaryLabelColor
         }
     }
 }
