@@ -17,6 +17,7 @@ final class RunService {
     }
 
     /// Creates a run, persists it, then executes in the background. Returns the run immediately.
+    /// The `onStatusChange` callback fires on the main thread whenever the run's status updates.
     func executeRun(
         for request: APIRequest,
         method: String,
@@ -24,7 +25,8 @@ final class RunService {
         headers: [(key: String, value: String)],
         bodyType: String?,
         bodyContent: String?,
-        context: ModelContext
+        context: ModelContext,
+        onStatusChange: (() -> Void)? = nil
     ) -> APICallRun {
         // Create lightweight run
         let run = APICallRun(
@@ -53,6 +55,7 @@ final class RunService {
         // Mark as running on MainActor
         run.status = .running
         try? context.save()
+        onStatusChange?()
         logger.info("Run \(runId) status → running")
 
         let executor = requestExecutor
@@ -72,6 +75,7 @@ final class RunService {
                     run.errorMessage = "Cancelled"
                     run.status = .failed
                     try? context.save()
+                    onStatusChange?()
                 }
                 logger.info("Run \(runId) status → failed [cancelled]")
                 return
@@ -80,6 +84,7 @@ final class RunService {
                     run.errorMessage = error.localizedDescription
                     run.status = .failed
                     try? context.save()
+                    onStatusChange?()
                 }
                 logger.error("Run \(runId) status → failed: \(error.localizedDescription)")
                 return
@@ -111,6 +116,7 @@ final class RunService {
 
                 run.status = .completed
                 try? context.save()
+                onStatusChange?()
                 logger.info("Run \(runId) status → completed [\(networkResult.statusCode)] in \(String(format: "%.0f", networkResult.duration * 1000))ms")
 
                 // Prune old runs

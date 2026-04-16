@@ -93,7 +93,8 @@ final class MainSplitViewController: NSSplitViewController {
     private func handleRequestSelection(_ request: APIRequest) {
         tabBarVM.openRequest(request)
         requestEditorVM.loadRequest(request)
-        restoreRunForActiveTab(request: request)
+        // Restore run in background so tab switch is instant
+        restoreRunForActiveTabAsync(request: request)
     }
 
     private func loadRequestForTab(_ tab: RequestTab) {
@@ -103,37 +104,56 @@ final class MainSplitViewController: NSSplitViewController {
         )
         if let request = try? sharedContext.fetch(descriptor).first {
             requestEditorVM.loadRequest(request)
-            restoreRunForActiveTab(request: request)
+            restoreRunForActiveTabAsync(request: request)
         }
     }
 
-    private func restoreRunForActiveTab(request: APIRequest) {
-        guard let tabId = tabBarVM.activeTabId,
-              let runId = tabBarVM.activeRunId(forTab: tabId) else {
-            // No run tracked for this tab — try to show the most recent run
-            let requestId = request.id
-            let descriptor = FetchDescriptor<APICallRun>(
-                predicate: #Predicate { $0.request?.id == requestId },
-                sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
-            )
-            if let latestRun = try? sharedContext.fetch(descriptor).first {
-                inspectorVM.setActiveRun(latestRun)
-                if let tabId = tabBarVM.activeTabId {
-                    tabBarVM.setActiveRun(latestRun.id, forTab: tabId)
-                }
-            } else {
-                inspectorVM.clear()
-            }
-            return
-        }
+    private func restoreRunForActiveTabAsync(request: APIRequest) {
+        let tabId = tabBarVM.activeTabId
+        let trackedRunId = tabId.flatMap { tabBarVM.activeRunId(forTab: $0) }
+        let requestId = request.id
+        let container = modelContainer
 
-        let descriptor = FetchDescriptor<APICallRun>(
-            predicate: #Predicate { $0.id == runId }
-        )
-        if let run = try? sharedContext.fetch(descriptor).first {
-            inspectorVM.setActiveRun(run)
-        } else {
-            inspectorVM.clear()
+        Task.detached(priority: .userInitiated) {
+            let bgContext = ModelContext(container)
+
+            let run: APICallRun?
+            if let runId = trackedRunId {
+                // Fetch the tracked run
+                let descriptor = FetchDescriptor<APICallRun>(
+                    predicate: #Predicate { $0.id == runId }
+                )
+                run = try? bgContext.fetch(descriptor).first
+            } else {
+                // No run tracked — find the most recent
+                let descriptor = FetchDescriptor<APICallRun>(
+                    predicate: #Predicate { $0.request?.id == requestId },
+                    sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+                )
+                run = try? bgContext.fetch(descriptor).first
+            }
+
+            let foundRunId = run?.id
+
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                if let foundRunId {
+                    // Re-fetch on main context so we have a main-thread object
+                    let mainDescriptor = FetchDescriptor<APICallRun>(
+                        predicate: #Predicate { $0.id == foundRunId }
+                    )
+                    if let mainRun = try? self.sharedContext.fetch(mainDescriptor).first {
+                        self.inspectorVM.setActiveRun(mainRun)
+                        if let tabId, trackedRunId == nil {
+                            self.tabBarVM.setActiveRun(mainRun.id, forTab: tabId)
+                        }
+                    } else {
+                        self.inspectorVM.clear()
+                    }
+                } else {
+                    self.inspectorVM.clear()
+                }
+            }
         }
     }
 
@@ -157,7 +177,10 @@ final class MainSplitViewController: NSSplitViewController {
             headers: headers,
             bodyType: bodyType,
             bodyContent: bodyContent,
-            context: sharedContext
+            context: sharedContext,
+            onStatusChange: { [weak self] in
+                self?.inspectorVM.runDidUpdate()
+            }
         )
 
         inspectorVM.setActiveRun(run)

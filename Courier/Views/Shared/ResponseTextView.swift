@@ -3,27 +3,12 @@ import SwiftUI
 
 /// A performant read-only text view backed by NSTextView with line numbers.
 /// Uses scroll-driven lazy syntax highlighting — only the visible viewport is highlighted.
-/// Large responses are truncated for display to avoid layout stalls.
 struct ResponseTextView: NSViewRepresentable {
     var plainText: String?
     var contentType: String?
 
-    static let displayCharLimit = 500_000
-
-    var isTruncated: Bool {
-        guard let text = plainText else { return false }
-        return text.count > Self.displayCharLimit
-    }
-
     private var displayText: String {
-        guard let text = plainText else { return "" }
-        guard text.count > Self.displayCharLimit else { return text }
-        let endIndex = text.index(text.startIndex, offsetBy: Self.displayCharLimit)
-        let truncated = text[text.startIndex ..< endIndex]
-        if let lastNewline = truncated.lastIndex(of: "\n") {
-            return String(truncated[truncated.startIndex ... lastNewline])
-        }
-        return String(truncated)
+        plainText ?? ""
     }
 
     func makeCoordinator() -> Coordinator {
@@ -54,6 +39,9 @@ struct ResponseTextView: NSViewRepresentable {
         textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         textView.textContainer?.lineFragmentPadding = 4
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+
+        // Lazy layout — only lay out visible portion, not entire document
+        textView.layoutManager?.allowsNonContiguousLayout = true
 
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = false

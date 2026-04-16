@@ -27,11 +27,12 @@ struct MainAreaView: View {
             if tabBarVM.tabs.isEmpty {
                 emptyContentCard
             } else {
-                ContentCardView(
+                ContentCardControllerView(
                     requestEditorVM: requestEditorVM,
                     inspectorVM: inspectorVM,
                     onSend: onSend
                 )
+                .clipShape(RoundedRectangle(cornerRadius: ContentCardMetrics.cornerRadius))
                 .padding(.top, -2)
                 .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 2)
             }
