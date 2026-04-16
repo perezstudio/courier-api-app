@@ -46,15 +46,27 @@ final class InspectorHeadersViewController: NSViewController, NSTableViewDataSou
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
         scrollView.borderType = .noBorder
+        scrollView.automaticallyAdjustsContentInsets = false
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
         view.addSubview(scrollView)
         NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: view.topAnchor, constant: 8),
+            scrollView.topAnchor.constraint(equalTo: view.topAnchor),
             scrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             scrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -8),
         ])
+
+        // Default top inset — overridden by `setTopInset` when hosted beneath a floating toolbar.
+        scrollView.contentInsets = NSEdgeInsets(top: 8, left: 0, bottom: 0, right: 0)
+    }
+
+    /// Inset the table's content so it starts below a floating toolbar; content scrolls
+    /// behind the toolbar when scrolled. Adds 8pt breathing room below the toolbar edge.
+    func setTopInset(_ inset: CGFloat) {
+        let total = inset + 8
+        scrollView.contentInsets = NSEdgeInsets(top: total, left: 0, bottom: 0, right: 0)
+        scrollView.scrollerInsets = NSEdgeInsets(top: total, left: 0, bottom: 0, right: 0)
     }
 
     func setHeaders(_ dict: [String: String]) {

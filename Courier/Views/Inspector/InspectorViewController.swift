@@ -299,6 +299,12 @@ final class InspectorViewController: NSViewController {
         bodyScrollView.drawsBackground = false
         bodyScrollView.borderType = .noBorder
 
+        // Content scrolls behind the floating toolbar; inset so text starts below it.
+        bodyScrollView.automaticallyAdjustsContentInsets = false
+        let topInset = InspectorToolbarView.height
+        bodyScrollView.contentInsets = NSEdgeInsets(top: topInset, left: 0, bottom: 0, right: 0)
+        bodyScrollView.scrollerInsets = NSEdgeInsets(top: topInset, left: 0, bottom: 0, right: 0)
+
         // Line number gutter
         let gutterView = LineNumberGutterView(textView: bodyTextView)
         bodyScrollView.verticalRulerView = gutterView
@@ -388,33 +394,38 @@ final class InspectorViewController: NSViewController {
         toolbarView.translatesAutoresizingMaskIntoConstraints = false
         bodyScrollView.translatesAutoresizingMaskIntoConstraints = false
 
-        view.addSubview(toolbarView)
-        view.addSubview(separator)
+        // Scroll views go in first so the toolbar floats on top of them.
         view.addSubview(bodyScrollView)
         view.addSubview(headersVC.view)
         view.addSubview(loadingContainer)
         view.addSubview(errorContainer)
         view.addSubview(emptyContainer)
+        view.addSubview(toolbarView)
+        view.addSubview(separator)
+
+        // Tell headers tab to inset its content so the table doesn't sit under the toolbar.
+        headersVC.setTopInset(InspectorToolbarView.height)
 
         NSLayoutConstraint.activate([
-            // Toolbar
+            // Toolbar (floats on top of content)
             toolbarView.topAnchor.constraint(equalTo: view.topAnchor),
             toolbarView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             toolbarView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            toolbarView.heightAnchor.constraint(equalToConstant: InspectorToolbarView.height),
 
-            // Separator
+            // Separator — bottom edge of toolbar, drawn above scroll content
             separator.topAnchor.constraint(equalTo: toolbarView.bottomAnchor),
             separator.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             separator.trailingAnchor.constraint(equalTo: view.trailingAnchor),
 
-            // Body scroll view
-            bodyScrollView.topAnchor.constraint(equalTo: separator.bottomAnchor),
+            // Body scroll view — full height; content inset handles the toolbar overlap
+            bodyScrollView.topAnchor.constraint(equalTo: view.topAnchor),
             bodyScrollView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             bodyScrollView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             bodyScrollView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
-            // Headers view
-            headersVC.view.topAnchor.constraint(equalTo: separator.bottomAnchor),
+            // Headers view — full height; internal scroll view insets handle overlap
+            headersVC.view.topAnchor.constraint(equalTo: view.topAnchor),
             headersVC.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             headersVC.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             headersVC.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),

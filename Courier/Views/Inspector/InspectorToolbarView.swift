@@ -1,7 +1,12 @@
 import AppKit
 
 /// Pure AppKit toolbar showing status code, timing, size, and Body/Headers tab selector.
-final class InspectorToolbarView: NSView {
+/// Uses `.headerView` visual effect material so content can scroll behind it.
+final class InspectorToolbarView: NSVisualEffectView {
+    /// Total height of the toolbar — used by the inspector to inset scroll view content
+    /// so text appears below the floating toolbar until scrolled.
+    static let height: CGFloat = 54
+
     var onTabChanged: ((InspectorTab) -> Void)?
     var onToggleInspector: (() -> Void)?
 
@@ -21,6 +26,9 @@ final class InspectorToolbarView: NSView {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+        material = .headerView
+        blendingMode = .withinWindow
+        state = .followsWindowActiveState
         setupViews()
     }
 
