@@ -7,15 +7,18 @@ final class Workspace {
     var name: String
     var sortOrder: Int
     var createdAt: Date
+    /// SF Symbol name shown in the workspace tab and in the footer's active-dot slot.
+    var iconSymbolName: String = "folder.fill"
     @Relationship(deleteRule: .cascade, inverse: \Folder.workspace) var folders: [Folder]
     @Relationship(deleteRule: .cascade, inverse: \Environment.workspace) var environments: [Environment]
     var activeEnvironmentId: UUID?
 
-    init(name: String, sortOrder: Int = 0) {
+    init(name: String, sortOrder: Int = 0, iconSymbolName: String = "folder.fill") {
         self.id = UUID()
         self.name = name
         self.sortOrder = sortOrder
         self.createdAt = Date()
+        self.iconSymbolName = iconSymbolName
         self.folders = []
         self.environments = []
     }

@@ -41,6 +41,7 @@ final class MainSplitViewController: NSSplitViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
 
+        object_setClass(splitView, InvisibleDividerSplitView.self)
         splitView.dividerStyle = .thin
         splitView.isVertical = true
 

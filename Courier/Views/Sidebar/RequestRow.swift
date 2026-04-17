@@ -6,8 +6,10 @@ struct RequestRow: View {
     let indentLevel: Int
     var onSelect: () -> Void
     var onDelete: () -> Void
+    var onMoveRequest: (UUID, UUID) -> Void
 
     @State private var isHovered = false
+    @State private var isDropTarget = false
 
     var body: some View {
         HStack(spacing: 6) {
@@ -28,6 +30,14 @@ struct RequestRow: View {
                       Color.primary.opacity(isHovered ? 0.04 : 0))
                 .padding(.horizontal, 4)
         )
+        .overlay(alignment: .top) {
+            if isDropTarget {
+                Rectangle()
+                    .fill(Color.accentColor)
+                    .frame(height: 2)
+                    .padding(.horizontal, 4)
+            }
+        }
         .contentShape(Rectangle())
         .onTapGesture {
             onSelect()
@@ -41,6 +51,14 @@ struct RequestRow: View {
             Button("Delete Request", role: .destructive) {
                 onDelete()
             }
+        }
+        .draggable(SidebarDragPayload(kind: .request, id: request.id))
+        .dropDestination(for: SidebarDragPayload.self) { payloads, _ in
+            guard let payload = payloads.first, payload.kind == .request else { return false }
+            onMoveRequest(payload.id, request.id)
+            return true
+        } isTargeted: { targeted in
+            isDropTarget = targeted
         }
     }
 }

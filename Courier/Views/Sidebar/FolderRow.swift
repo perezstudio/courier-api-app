@@ -8,8 +8,11 @@ struct FolderRow: View {
     var onCreateRequest: (String, Folder) -> Void
     var onDeleteFolder: (Folder) -> Void
     var onDeleteRequest: (APIRequest) -> Void
+    var onMoveFolder: (UUID, UUID) -> Void
+    var onMoveRequest: (UUID, UUID) -> Void
 
     @State private var isHovered = false
+    @State private var isDropTarget = false
     @State private var isCreatingRequest = false
     @State private var newRequestName = ""
 
@@ -60,6 +63,15 @@ struct FolderRow: View {
                     .fill(Color.primary.opacity(isHovered ? 0.04 : 0))
                     .padding(.horizontal, 4)
             )
+            .overlay(alignment: .top) {
+                // Drop-insertion indicator
+                if isDropTarget {
+                    Rectangle()
+                        .fill(Color.accentColor)
+                        .frame(height: 2)
+                        .padding(.horizontal, 4)
+                }
+            }
             .contentShape(Rectangle())
             .onTapGesture {
                 withAnimation(.easeInOut(duration: 0.15)) {
@@ -81,6 +93,14 @@ struct FolderRow: View {
                     onDeleteFolder(folder)
                 }
             }
+            .draggable(SidebarDragPayload(kind: .folder, id: folder.id))
+            .dropDestination(for: SidebarDragPayload.self) { payloads, _ in
+                guard let payload = payloads.first, payload.kind == .folder else { return false }
+                onMoveFolder(payload.id, folder.id)
+                return true
+            } isTargeted: { targeted in
+                isDropTarget = targeted
+            }
 
             // Children
             if folder.isExpanded {
@@ -92,7 +112,9 @@ struct FolderRow: View {
                         onSelectRequest: onSelectRequest,
                         onCreateRequest: onCreateRequest,
                         onDeleteFolder: onDeleteFolder,
-                        onDeleteRequest: onDeleteRequest
+                        onDeleteRequest: onDeleteRequest,
+                        onMoveFolder: onMoveFolder,
+                        onMoveRequest: onMoveRequest
                     )
                 }
 
@@ -107,7 +129,8 @@ struct FolderRow: View {
                         },
                         onDelete: {
                             onDeleteRequest(request)
-                        }
+                        },
+                        onMoveRequest: onMoveRequest
                     )
                 }
             }

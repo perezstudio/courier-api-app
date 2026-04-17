@@ -36,7 +36,14 @@
             }
           ],
           "image-name" : "courier-icon.svg",
-          "name" : "courier-icon"
+          "name" : "courier-icon",
+          "position" : {
+            "scale" : 1.25,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
         }
       ],
       "shadow" : {

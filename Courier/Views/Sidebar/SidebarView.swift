@@ -7,51 +7,50 @@ struct SidebarView: View {
 
     @State private var isCreatingWorkspace = false
     @State private var newWorkspaceName = ""
+    @State private var isCreatingFolder = false
+    @State private var newFolderName = ""
 
     var body: some View {
         VStack(spacing: 0) {
-            // Toolbar area - reserves space for traffic lights
+            // Top toolbar — reserves space for traffic lights.
             sidebarToolbar
 
-            Divider()
-
-            // Workspace switcher + collection tree
+            // Body
             if viewModel.workspaces.isEmpty {
                 emptyState
             } else {
-                workspaceContent
+                workspacePager
             }
+
+            // Footer: + folder (left) | dots (center) | + workspace (right)
+            sidebarFooter
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background { VisualEffectBackground(material: .sidebar) }
         .ignoresSafeArea(edges: .top)
         .sheet(isPresented: $isCreatingWorkspace) {
             newWorkspaceSheet
         }
+        .alert("New Folder", isPresented: $isCreatingFolder) {
+            TextField("Folder name", text: $newFolderName)
+            Button("Cancel", role: .cancel) {}
+            Button("Create") {
+                let name = newFolderName.trimmingCharacters(in: .whitespaces)
+                if !name.isEmpty, let workspace = viewModel.currentWorkspace {
+                    viewModel.createFolder(name: name, in: workspace)
+                }
+            }
+        }
     }
 
-    // MARK: - Toolbar
+    // MARK: - Top toolbar (traffic-light clearance)
 
     private var sidebarToolbar: some View {
-        HStack {
-            Spacer()
-
-            Button {
-                isCreatingWorkspace = true
-                newWorkspaceName = ""
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: HoverButtonSize.regular.symbolSize))
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.courierHover())
-        }
-        .padding(.horizontal, 12)
-        .frame(height: ContentCardMetrics.tabBarHeight)
-        .padding(.top, 6) // Extra space for traffic lights
+        HStack { Spacer() }
+            .frame(height: ContentCardMetrics.tabBarHeight)
+            .padding(.top, 6)
     }
 
-    // MARK: - Empty State
+    // MARK: - Empty state
 
     private var emptyState: some View {
         VStack(spacing: 12) {
@@ -69,42 +68,91 @@ struct SidebarView: View {
             .buttonStyle(.courierHoverText())
             Spacer()
         }
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    // MARK: - Workspace Content
+    // MARK: - Horizontal paging body
 
-    private var workspaceContent: some View {
-        VStack(spacing: 0) {
-            // Workspace switcher
-            WorkspaceSwitcherView(
+    private var workspacePager: some View {
+        ScrollView(.horizontal) {
+            LazyHStack(spacing: 0) {
+                ForEach(viewModel.workspaces) { workspace in
+                    WorkspacePageView(
+                        workspace: workspace,
+                        selectedRequestId: $viewModel.selectedRequestId,
+                        onSelectRequest: onSelectRequest,
+                        onCreateRequest: { name, folder in
+                            viewModel.createRequest(name: name, in: folder)
+                        },
+                        onDeleteFolder: { folder in
+                            viewModel.deleteFolder(folder)
+                        },
+                        onDeleteRequest: { request in
+                            viewModel.deleteRequest(request)
+                        },
+                        onRenameWorkspace: { newName in
+                            viewModel.renameWorkspace(workspace, to: newName)
+                        },
+                        onSetWorkspaceIcon: { symbol in
+                            viewModel.setWorkspaceIcon(workspace, to: symbol)
+                        },
+                        onDeleteWorkspace: {
+                            viewModel.deleteWorkspace(workspace)
+                        },
+                        onMoveFolder: { dragged, target in
+                            viewModel.moveFolder(dragged, before: target)
+                        },
+                        onMoveRequest: { dragged, target in
+                            viewModel.moveRequest(dragged, before: target)
+                        }
+                    )
+                    .containerRelativeFrame(.horizontal)
+                    .id(workspace.id)
+                }
+            }
+            .scrollTargetLayout()
+        }
+        .scrollTargetBehavior(.paging)
+        .scrollIndicators(.hidden)
+        .scrollPosition(id: $viewModel.selectedWorkspaceId)
+    }
+
+    // MARK: - Footer
+
+    private var sidebarFooter: some View {
+        HStack {
+            Button {
+                isCreatingFolder = true
+                newFolderName = ""
+            } label: {
+                Image(systemName: "folder.badge.plus")
+                    .font(.system(size: HoverButtonSize.small.symbolSize))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.courierHover(size: .small))
+            .disabled(viewModel.currentWorkspace == nil)
+
+            Spacer()
+
+            WorkspaceIndicatorDots(
                 workspaces: viewModel.workspaces,
-                selectedIndex: $viewModel.selectedWorkspaceIndex
+                selectedId: $viewModel.selectedWorkspaceId
             )
 
-            Divider()
+            Spacer()
 
-            // Collection tree
-            if let workspace = viewModel.currentWorkspace {
-                CollectionTreeView(
-                    workspace: workspace,
-                    selectedRequestId: $viewModel.selectedRequestId,
-                    onSelectRequest: onSelectRequest,
-                    onCreateFolder: { name in
-                        viewModel.createFolder(name: name, in: workspace)
-                    },
-                    onCreateRequest: { name, folder in
-                        viewModel.createRequest(name: name, in: folder)
-                    },
-                    onDeleteFolder: { folder in
-                        viewModel.deleteFolder(folder)
-                    },
-                    onDeleteRequest: { request in
-                        viewModel.deleteRequest(request)
-                    }
-                )
+            Button {
+                isCreatingWorkspace = true
+                newWorkspaceName = ""
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: HoverButtonSize.small.symbolSize))
+                    .foregroundStyle(.secondary)
             }
+            .buttonStyle(.courierHover(size: .small))
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
     }
 
     // MARK: - New Workspace Sheet

@@ -42,6 +42,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         self.splitViewController = splitVC
 
         guard let contentView = window?.contentView else { return }
+
+        // Single window-wide sidebar-material backdrop. Both split panes sit on top of
+        // this transparently, so the split divider seam reveals the same material instead
+        // of two independently-blurred NSVisualEffectViews meeting at a line.
+        let backdrop = NSVisualEffectView(frame: contentView.bounds)
+        backdrop.autoresizingMask = [.width, .height]
+        backdrop.material = .sidebar
+        backdrop.blendingMode = .behindWindow
+        backdrop.state = .followsWindowActiveState
+        contentView.addSubview(backdrop)
+
         splitVC.view.frame = contentView.bounds
         splitVC.view.autoresizingMask = [.width, .height]
         contentView.addSubview(splitVC.view)

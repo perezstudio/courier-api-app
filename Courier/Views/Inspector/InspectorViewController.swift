@@ -58,6 +58,8 @@ final class InspectorViewController: NSViewController {
     override func loadView() {
         view = NSView()
         view.wantsLayer = true
+        // Match the content card's background so the inspector blends seamlessly.
+        view.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
 
         setupTextView()
         setupStateViews()
