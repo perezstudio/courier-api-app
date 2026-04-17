@@ -1,10 +1,12 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// A single workspace page inside the sidebar's horizontal paging ScrollView.
 /// Contains the Admiral-style workspace tab on top and a custom for-each
 /// over the workspace's folders (recursively rendering requests).
 struct WorkspacePageView: View {
     @Bindable var workspace: Workspace
+    @Bindable var dragState: SidebarDragState
     @Binding var selectedRequestId: UUID?
     var onSelectRequest: (APIRequest) -> Void
     var onCreateRequest: (String, Folder) -> Void
@@ -13,14 +15,11 @@ struct WorkspacePageView: View {
     var onRenameWorkspace: (String) -> Void
     var onSetWorkspaceIcon: (String) -> Void
     var onDeleteWorkspace: () -> Void
-    var onMoveFolder: (UUID, UUID) -> Void
-    var onMoveRequest: (UUID, UUID) -> Void
+    var onMoveItem: (UUID, UUID) -> Void
+    var onMoveToRoot: (UUID) -> Void
+    var onMoveIntoFolder: (UUID, Folder) -> Void
 
-    private var sortedFolders: [Folder] {
-        workspace.folders
-            .filter { $0.parentFolder == nil }
-            .sorted { $0.sortOrder < $1.sortOrder }
-    }
+    private var rootItems: [SidebarItem] { workspace.rootItems }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -36,19 +35,34 @@ struct WorkspacePageView: View {
 
             ScrollView(.vertical) {
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(sortedFolders) { folder in
-                        FolderRow(
-                            folder: folder,
+                    ForEach(rootItems) { item in
+                        SidebarItemRow(
+                            item: item,
+                            dragState: dragState,
                             selectedRequestId: $selectedRequestId,
                             indentLevel: 0,
                             onSelectRequest: onSelectRequest,
                             onCreateRequest: onCreateRequest,
                             onDeleteFolder: onDeleteFolder,
                             onDeleteRequest: onDeleteRequest,
-                            onMoveFolder: onMoveFolder,
-                            onMoveRequest: onMoveRequest
+                            onMoveItem: onMoveItem,
+                            onMoveIntoFolder: onMoveIntoFolder
                         )
                     }
+
+                    // Tail drop zone: accept drops at the end of workspace root.
+                    Color.clear
+                        .frame(minHeight: 44)
+                        .frame(maxWidth: .infinity)
+                        .contentShape(Rectangle())
+                        .onDrop(
+                            of: [.text],
+                            delegate: ContainerDropDelegate(
+                                dragState: dragState,
+                                appendToContainer: onMoveToRoot,
+                                onDropFinished: { dragState.end() }
+                            )
+                        )
                 }
                 .padding(.vertical, 4)
             }

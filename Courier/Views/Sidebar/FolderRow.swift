@@ -1,28 +1,29 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct FolderRow: View {
     @Bindable var folder: Folder
+    @Bindable var dragState: SidebarDragState
     @Binding var selectedRequestId: UUID?
     let indentLevel: Int
     var onSelectRequest: (APIRequest) -> Void
     var onCreateRequest: (String, Folder) -> Void
     var onDeleteFolder: (Folder) -> Void
     var onDeleteRequest: (APIRequest) -> Void
-    var onMoveFolder: (UUID, UUID) -> Void
-    var onMoveRequest: (UUID, UUID) -> Void
+    var onMoveItem: (UUID, UUID) -> Void
+    var onMoveIntoFolder: (UUID, Folder) -> Void
 
     @State private var isHovered = false
-    @State private var isDropTarget = false
     @State private var isCreatingRequest = false
     @State private var newRequestName = ""
+    /// True between this row starting a drag and the drag ending. Lets us
+    /// restore this folder's expansion state even if the drop lands on a
+    /// different row (which is the common case).
+    @State private var startedDragHere = false
+    @State private var expansionBeforeDrag = true
 
-    private var sortedRequests: [APIRequest] {
-        folder.requests.sorted { $0.sortOrder < $1.sortOrder }
-    }
-
-    private var sortedSubFolders: [Folder] {
-        folder.subFolders.sorted { $0.sortOrder < $1.sortOrder }
-    }
+    private var children: [SidebarItem] { folder.children }
+    private var isBeingDragged: Bool { dragState.draggedId == folder.id }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -63,15 +64,6 @@ struct FolderRow: View {
                     .fill(Color.primary.opacity(isHovered ? 0.04 : 0))
                     .padding(.horizontal, 4)
             )
-            .overlay(alignment: .top) {
-                // Drop-insertion indicator
-                if isDropTarget {
-                    Rectangle()
-                        .fill(Color.accentColor)
-                        .frame(height: 2)
-                        .padding(.horizontal, 4)
-                }
-            }
             .contentShape(Rectangle())
             .onTapGesture {
                 withAnimation(.easeInOut(duration: 0.15)) {
@@ -93,45 +85,86 @@ struct FolderRow: View {
                     onDeleteFolder(folder)
                 }
             }
-            .draggable(SidebarDragPayload(kind: .folder, id: folder.id))
-            .dropDestination(for: SidebarDragPayload.self) { payloads, _ in
-                guard let payload = payloads.first, payload.kind == .folder else { return false }
-                onMoveFolder(payload.id, folder.id)
-                return true
-            } isTargeted: { targeted in
-                isDropTarget = targeted
+            .opacity(isBeingDragged ? 0.4 : 1)
+            .scaleEffect(isBeingDragged ? 0.97 : 1)
+            .onDrag {
+                expansionBeforeDrag = folder.isExpanded
+                startedDragHere = true
+                dragState.begin(id: folder.id, kind: .folder, folderWasExpanded: folder.isExpanded)
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                    folder.isExpanded = false
+                }
+                return NSItemProvider(object: folder.id.uuidString as NSString)
+            }
+            .onDrop(
+                of: [.text],
+                delegate: ItemDropDelegate(
+                    targetId: folder.id,
+                    dragState: dragState,
+                    moveBefore: onMoveItem,
+                    onDropFinished: { dragState.end() }
+                )
+            )
+            // Dwell-to-expand strip: when this folder is collapsed, an overlay
+            // on the header detects a hovering drag and auto-expands after 400ms.
+            .overlay {
+                if !folder.isExpanded && !isBeingDragged {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .onDrop(
+                            of: [.text],
+                            delegate: FolderHeaderDropDelegate(
+                                folder: folder,
+                                dragState: dragState,
+                                appendIntoFolder: { id in onMoveIntoFolder(id, folder) },
+                                onDropFinished: { dragState.end() }
+                            )
+                        )
+                        .allowsHitTesting(dragState.isActive)
+                }
+            }
+            .onChange(of: dragState.isActive) { _, active in
+                // Drag ended: restore this folder's expansion if we started the drag.
+                if !active && startedDragHere {
+                    startedDragHere = false
+                    if expansionBeforeDrag {
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {
+                            folder.isExpanded = true
+                        }
+                    }
+                }
             }
 
-            // Children
+            // Children (unified folders + requests)
             if folder.isExpanded {
-                ForEach(sortedSubFolders) { subFolder in
-                    FolderRow(
-                        folder: subFolder,
+                ForEach(children) { item in
+                    SidebarItemRow(
+                        item: item,
+                        dragState: dragState,
                         selectedRequestId: $selectedRequestId,
                         indentLevel: indentLevel + 1,
                         onSelectRequest: onSelectRequest,
                         onCreateRequest: onCreateRequest,
                         onDeleteFolder: onDeleteFolder,
                         onDeleteRequest: onDeleteRequest,
-                        onMoveFolder: onMoveFolder,
-                        onMoveRequest: onMoveRequest
+                        onMoveItem: onMoveItem,
+                        onMoveIntoFolder: onMoveIntoFolder
                     )
                 }
 
-                ForEach(sortedRequests) { request in
-                    RequestRow(
-                        request: request,
-                        isSelected: selectedRequestId == request.id,
-                        indentLevel: indentLevel + 1,
-                        onSelect: {
-                            selectedRequestId = request.id
-                            onSelectRequest(request)
-                        },
-                        onDelete: {
-                            onDeleteRequest(request)
-                        },
-                        onMoveRequest: onMoveRequest
-                    )
+                // Tail zone inside expanded folder: drop here to append to this folder.
+                if dragState.isActive {
+                    Color.clear
+                        .frame(height: 12)
+                        .contentShape(Rectangle())
+                        .onDrop(
+                            of: [.text],
+                            delegate: ContainerDropDelegate(
+                                dragState: dragState,
+                                appendToContainer: { id in onMoveIntoFolder(id, folder) },
+                                onDropFinished: { dragState.end() }
+                            )
+                        )
                 }
             }
         }

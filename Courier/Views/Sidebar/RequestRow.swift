@@ -1,18 +1,21 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct RequestRow: View {
     @Bindable var request: APIRequest
+    @Bindable var dragState: SidebarDragState
     let isSelected: Bool
     let indentLevel: Int
     var onSelect: () -> Void
     var onDelete: () -> Void
-    var onMoveRequest: (UUID, UUID) -> Void
+    var onMoveItem: (UUID, UUID) -> Void
 
     @State private var isHovered = false
-    @State private var isDropTarget = false
     @State private var isRenaming = false
     @State private var draftName = ""
     @FocusState private var isRenameFocused: Bool
+
+    private var isBeingDragged: Bool { dragState.draggedId == request.id }
 
     var body: some View {
         HStack(spacing: 6) {
@@ -45,14 +48,6 @@ struct RequestRow: View {
                       Color.primary.opacity(isHovered ? 0.04 : 0))
                 .padding(.horizontal, 4)
         )
-        .overlay(alignment: .top) {
-            if isDropTarget {
-                Rectangle()
-                    .fill(Color.accentColor)
-                    .frame(height: 2)
-                    .padding(.horizontal, 4)
-            }
-        }
         .contentShape(Rectangle())
         .onTapGesture(count: 2) {
             beginRename()
@@ -73,14 +68,21 @@ struct RequestRow: View {
                 onDelete()
             }
         }
-        .draggable(SidebarDragPayload(kind: .request, id: request.id))
-        .dropDestination(for: SidebarDragPayload.self) { payloads, _ in
-            guard let payload = payloads.first, payload.kind == .request else { return false }
-            onMoveRequest(payload.id, request.id)
-            return true
-        } isTargeted: { targeted in
-            isDropTarget = targeted
+        .opacity(isBeingDragged ? 0.4 : 1)
+        .scaleEffect(isBeingDragged ? 0.97 : 1)
+        .onDrag {
+            dragState.begin(id: request.id, kind: .request)
+            return NSItemProvider(object: request.id.uuidString as NSString)
         }
+        .onDrop(
+            of: [.text],
+            delegate: ItemDropDelegate(
+                targetId: request.id,
+                dragState: dragState,
+                moveBefore: onMoveItem,
+                onDropFinished: { dragState.end() }
+            )
+        )
     }
 
     private func beginRename() {

@@ -9,6 +9,8 @@ final class SidebarViewModel {
     /// Source of truth; `selectedWorkspaceIndex` is derived.
     var selectedWorkspaceId: UUID?
     var selectedRequestId: UUID?
+    /// Shared drag state for the sidebar.
+    let dragState = SidebarDragState()
 
     private var modelContext: ModelContext
 
@@ -105,47 +107,155 @@ final class SidebarViewModel {
         try? modelContext.save()
     }
 
-    // MARK: - Reorder (v1: same-parent only)
+    // MARK: - Reorder (unified folders + requests)
 
-    /// Reorder `draggedId` so it lands immediately before `targetId` within the same parent
-    /// (same workspace + same parentFolder). Ignores the move if they don't share a parent.
-    func moveFolder(_ draggedId: UUID, before targetId: UUID) {
-        guard draggedId != targetId else { return }
-        guard let dragged = findFolder(id: draggedId),
-              let target = findFolder(id: targetId) else { return }
-        guard dragged.workspace?.id == target.workspace?.id,
-              dragged.parentFolder?.id == target.parentFolder?.id else { return }
+    /// Container that holds sidebar items. Either a workspace (root) or a folder.
+    enum ItemContainer {
+        case workspace(Workspace)
+        case folder(Folder)
 
-        let siblings = siblingFolders(of: dragged)
-        var ordered = siblings.filter { $0.id != draggedId }
-        if let targetIdx = ordered.firstIndex(where: { $0.id == targetId }) {
-            ordered.insert(dragged, at: targetIdx)
-        } else {
-            ordered.append(dragged)
+        var id: UUID {
+            switch self {
+            case .workspace(let w): return w.id
+            case .folder(let f): return f.id
+            }
         }
-        for (idx, folder) in ordered.enumerated() {
-            folder.sortOrder = idx
-        }
-        try? modelContext.save()
     }
 
-    /// Reorder `draggedId` so it lands immediately before `targetId` within the same folder.
-    func moveRequest(_ draggedId: UUID, before targetId: UUID) {
-        guard draggedId != targetId else { return }
-        guard let dragged = findRequest(id: draggedId),
-              let target = findRequest(id: targetId) else { return }
-        guard let parent = dragged.folder, parent.id == target.folder?.id else { return }
+    /// Move a folder or request into `destination` at a specific index.
+    /// Handles cross-container moves (root ↔ folder ↔ another folder) and same-container reorders.
+    /// Rejects moves that would place a folder inside itself or one of its descendants.
+    func moveItem(_ draggedId: UUID, into destination: ItemContainer, at insertIndex: Int) {
+        // Resolve the dragged item.
+        if let dragged = findFolder(id: draggedId) {
+            // Prevent moving a folder into itself or any of its descendants.
+            if case .folder(let destFolder) = destination {
+                if destFolder.id == dragged.id || isDescendant(destFolder, of: dragged) {
+                    return
+                }
+            }
 
-        var ordered = parent.requests.sorted { $0.sortOrder < $1.sortOrder }.filter { $0.id != draggedId }
-        if let targetIdx = ordered.firstIndex(where: { $0.id == targetId }) {
-            ordered.insert(dragged, at: targetIdx)
-        } else {
-            ordered.append(dragged)
+            let originChildren = containerChildren(for: containerFor(folder: dragged))
+            var destinationChildren = containerChildren(for: destination)
+                .filter { $0.id != draggedId }
+            let clampedIdx = max(0, min(insertIndex, destinationChildren.count))
+            destinationChildren.insert(.folder(dragged), at: clampedIdx)
+
+            // Reassign parentage.
+            switch destination {
+            case .workspace(let ws):
+                dragged.workspace = ws
+                dragged.parentFolder = nil
+            case .folder(let parent):
+                dragged.workspace = parent.workspace
+                dragged.parentFolder = parent
+            }
+
+            renumber(children: destinationChildren)
+            // If origin and destination differ, renumber the origin too.
+            if originChildren.map(\.id) != destinationChildren.map(\.id) {
+                renumber(children: originChildren.filter { $0.id != draggedId })
+            }
+            try? modelContext.save()
+            return
         }
-        for (idx, request) in ordered.enumerated() {
-            request.sortOrder = idx
+
+        if let dragged = findRequest(id: draggedId) {
+            let originChildren = containerChildren(for: containerFor(request: dragged))
+            var destinationChildren = containerChildren(for: destination)
+                .filter { $0.id != draggedId }
+            let clampedIdx = max(0, min(insertIndex, destinationChildren.count))
+            destinationChildren.insert(.request(dragged), at: clampedIdx)
+
+            switch destination {
+            case .workspace(let ws):
+                dragged.workspace = ws
+                dragged.folder = nil
+            case .folder(let parent):
+                dragged.workspace = nil
+                dragged.folder = parent
+            }
+
+            renumber(children: destinationChildren)
+            if originChildren.map(\.id) != destinationChildren.map(\.id) {
+                renumber(children: originChildren.filter { $0.id != draggedId })
+            }
+            try? modelContext.save()
+            return
         }
-        try? modelContext.save()
+    }
+
+    /// Move `draggedId` to immediately before `targetId`. The target's container is resolved automatically.
+    func moveItem(_ draggedId: UUID, before targetId: UUID) {
+        guard let targetContainer = containerForItem(id: targetId) else { return }
+        let children = containerChildren(for: targetContainer).filter { $0.id != draggedId }
+        let insertIdx = children.firstIndex { $0.id == targetId } ?? children.count
+        moveItem(draggedId, into: targetContainer, at: insertIdx)
+    }
+
+    /// Move `draggedId` to immediately after `targetId`.
+    func moveItem(_ draggedId: UUID, after targetId: UUID) {
+        guard let targetContainer = containerForItem(id: targetId) else { return }
+        let children = containerChildren(for: targetContainer).filter { $0.id != draggedId }
+        let insertIdx = (children.firstIndex { $0.id == targetId } ?? (children.count - 1)) + 1
+        moveItem(draggedId, into: targetContainer, at: insertIdx)
+    }
+
+    /// Append `draggedId` to the end of `workspace`'s root items.
+    func moveItemToWorkspaceRoot(_ draggedId: UUID, workspace: Workspace) {
+        let count = workspace.rootItems.filter { $0.id != draggedId }.count
+        moveItem(draggedId, into: .workspace(workspace), at: count)
+    }
+
+    /// Append `draggedId` to the end of `folder`'s children.
+    func moveItemIntoFolder(_ draggedId: UUID, folder: Folder) {
+        let count = folder.children.filter { $0.id != draggedId }.count
+        moveItem(draggedId, into: .folder(folder), at: count)
+    }
+
+    // MARK: - Container helpers
+
+    private func containerChildren(for container: ItemContainer) -> [SidebarItem] {
+        switch container {
+        case .workspace(let w): return w.rootItems
+        case .folder(let f): return f.children
+        }
+    }
+
+    private func containerFor(folder: Folder) -> ItemContainer {
+        if let parent = folder.parentFolder { return .folder(parent) }
+        if let ws = folder.workspace { return .workspace(ws) }
+        return .workspace(workspaces.first!) // fallback; should not happen
+    }
+
+    private func containerFor(request: APIRequest) -> ItemContainer {
+        if let parent = request.folder { return .folder(parent) }
+        if let ws = request.workspace { return .workspace(ws) }
+        return .workspace(workspaces.first!) // fallback
+    }
+
+    private func containerForItem(id: UUID) -> ItemContainer? {
+        if let f = findFolder(id: id) { return containerFor(folder: f) }
+        if let r = findRequest(id: id) { return containerFor(request: r) }
+        return nil
+    }
+
+    private func renumber(children: [SidebarItem]) {
+        for (idx, item) in children.enumerated() {
+            switch item {
+            case .folder(let f): f.sortOrder = idx
+            case .request(let r): r.sortOrder = idx
+            }
+        }
+    }
+
+    private func isDescendant(_ candidate: Folder, of ancestor: Folder) -> Bool {
+        var cursor: Folder? = candidate.parentFolder
+        while let c = cursor {
+            if c.id == ancestor.id { return true }
+            cursor = c.parentFolder
+        }
+        return false
     }
 
     // MARK: - Lookup helpers
@@ -180,15 +290,4 @@ final class SidebarViewModel {
         return nil
     }
 
-    private func siblingFolders(of folder: Folder) -> [Folder] {
-        let siblings: [Folder]
-        if let parent = folder.parentFolder {
-            siblings = parent.subFolders
-        } else if let workspace = folder.workspace {
-            siblings = workspace.folders.filter { $0.parentFolder == nil }
-        } else {
-            siblings = []
-        }
-        return siblings.sorted { $0.sortOrder < $1.sortOrder }
-    }
 }

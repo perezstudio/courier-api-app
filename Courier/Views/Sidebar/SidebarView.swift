@@ -79,6 +79,7 @@ struct SidebarView: View {
                 ForEach(viewModel.workspaces) { workspace in
                     WorkspacePageView(
                         workspace: workspace,
+                        dragState: viewModel.dragState,
                         selectedRequestId: $viewModel.selectedRequestId,
                         onSelectRequest: onSelectRequest,
                         onCreateRequest: { name, folder in
@@ -99,11 +100,14 @@ struct SidebarView: View {
                         onDeleteWorkspace: {
                             viewModel.deleteWorkspace(workspace)
                         },
-                        onMoveFolder: { dragged, target in
-                            viewModel.moveFolder(dragged, before: target)
+                        onMoveItem: { dragged, target in
+                            viewModel.moveItem(dragged, before: target)
                         },
-                        onMoveRequest: { dragged, target in
-                            viewModel.moveRequest(dragged, before: target)
+                        onMoveToRoot: { dragged in
+                            viewModel.moveItemToWorkspaceRoot(dragged, workspace: workspace)
+                        },
+                        onMoveIntoFolder: { dragged, folder in
+                            viewModel.moveItemIntoFolder(dragged, folder: folder)
                         }
                     )
                     .containerRelativeFrame(.horizontal)
