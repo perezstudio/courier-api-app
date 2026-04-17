@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct RequestRow: View {
-    let request: APIRequest
+    @Bindable var request: APIRequest
     let isSelected: Bool
     let indentLevel: Int
     var onSelect: () -> Void
@@ -10,14 +10,29 @@ struct RequestRow: View {
 
     @State private var isHovered = false
     @State private var isDropTarget = false
+    @State private var isRenaming = false
+    @State private var draftName = ""
+    @FocusState private var isRenameFocused: Bool
 
     var body: some View {
         HStack(spacing: 6) {
             MethodBadge(method: request.method)
 
-            Text(request.name)
-                .font(.system(size: 12))
-                .lineLimit(1)
+            if isRenaming {
+                TextField("", text: $draftName)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .focused($isRenameFocused)
+                    .onSubmit { commitRename() }
+                    .onExitCommand { cancelRename() }
+                    .onChange(of: isRenameFocused) { _, focused in
+                        if !focused && isRenaming { commitRename() }
+                    }
+            } else {
+                Text(request.name)
+                    .font(.system(size: 12))
+                    .lineLimit(1)
+            }
 
             Spacer()
         }
@@ -39,6 +54,9 @@ struct RequestRow: View {
             }
         }
         .contentShape(Rectangle())
+        .onTapGesture(count: 2) {
+            beginRename()
+        }
         .onTapGesture {
             onSelect()
         }
@@ -48,6 +66,9 @@ struct RequestRow: View {
             }
         }
         .contextMenu {
+            Button("Rename") {
+                beginRename()
+            }
             Button("Delete Request", role: .destructive) {
                 onDelete()
             }
@@ -60,5 +81,25 @@ struct RequestRow: View {
         } isTargeted: { targeted in
             isDropTarget = targeted
         }
+    }
+
+    private func beginRename() {
+        draftName = request.name
+        isRenaming = true
+        DispatchQueue.main.async {
+            isRenameFocused = true
+        }
+    }
+
+    private func commitRename() {
+        let trimmed = draftName.trimmingCharacters(in: .whitespaces)
+        if !trimmed.isEmpty {
+            request.name = trimmed
+        }
+        isRenaming = false
+    }
+
+    private func cancelRename() {
+        isRenaming = false
     }
 }

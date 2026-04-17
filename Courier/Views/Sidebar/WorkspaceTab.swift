@@ -42,6 +42,8 @@ struct WorkspaceTab: View {
                 .font(.system(size: 11, weight: .semibold))
                 .lineLimit(1)
 
+            Spacer(minLength: 4)
+
             if isHovered {
                 Menu {
                     menuContents
@@ -57,6 +59,7 @@ struct WorkspaceTab: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: 28)
         .background {
             RoundedRectangle(cornerRadius: 6)
