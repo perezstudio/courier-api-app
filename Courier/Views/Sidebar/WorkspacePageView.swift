@@ -49,22 +49,23 @@ struct WorkspacePageView: View {
                             onMoveIntoFolder: onMoveIntoFolder
                         )
                     }
-
-                    // Tail drop zone: accept drops at the end of workspace root.
-                    Color.clear
-                        .frame(minHeight: 44)
-                        .frame(maxWidth: .infinity)
-                        .contentShape(Rectangle())
-                        .onDrop(
-                            of: [.text],
-                            delegate: ContainerDropDelegate(
-                                dragState: dragState,
-                                appendToContainer: onMoveToRoot,
-                                onDropFinished: { dragState.end() }
-                            )
-                        )
                 }
                 .padding(.vertical, 4)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            }
+            // Fallback drop zone: any drop in the scroll area below the last
+            // row falls through to this background and appends at workspace root.
+            .background {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onDrop(
+                        of: [.text],
+                        delegate: ContainerDropDelegate(
+                            dragState: dragState,
+                            appendToContainer: onMoveToRoot,
+                            onDropFinished: { dragState.end() }
+                        )
+                    )
             }
         }
     }

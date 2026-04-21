@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import os
 
 struct FolderRow: View {
     @Bindable var folder: Folder
@@ -88,6 +89,7 @@ struct FolderRow: View {
             .opacity(isBeingDragged ? 0.4 : 1)
             .scaleEffect(isBeingDragged ? 0.97 : 1)
             .onDrag {
+                SidebarLog.drag.debug("onDrag folder=\(folder.name, privacy: .public) id=\(folder.id, privacy: .public)")
                 expansionBeforeDrag = folder.isExpanded
                 startedDragHere = true
                 dragState.begin(id: folder.id, kind: .folder, folderWasExpanded: folder.isExpanded)
@@ -126,6 +128,7 @@ struct FolderRow: View {
             .onChange(of: dragState.isActive) { _, active in
                 // Drag ended: restore this folder's expansion if we started the drag.
                 if !active && startedDragHere {
+                    SidebarLog.drag.debug("restore expansion folder=\(folder.name, privacy: .public) wasExpanded=\(expansionBeforeDrag)")
                     startedDragHere = false
                     if expansionBeforeDrag {
                         withAnimation(.spring(response: 0.28, dampingFraction: 0.82)) {

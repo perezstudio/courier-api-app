@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import os
 
 /// Shared, transient drag state for the sidebar. Rows read this to show
 /// drag feedback (opacity/scale); drop delegates mutate it as a drag starts
@@ -16,12 +17,14 @@ final class SidebarDragState {
     var isActive: Bool { draggedId != nil }
 
     func begin(id: UUID, kind: SidebarItem.Kind, folderWasExpanded: Bool = false) {
+        SidebarLog.drag.debug("DragState.begin id=\(id, privacy: .public) kind=\(String(describing: kind), privacy: .public) folderWasExpanded=\(folderWasExpanded)")
         self.draggedId = id
         self.draggedKind = kind
         self.folderWasExpanded = folderWasExpanded
     }
 
     func end() {
+        SidebarLog.drag.debug("DragState.end (was dragging \(self.draggedId?.uuidString ?? "nil", privacy: .public))")
         draggedId = nil
         draggedKind = nil
         folderWasExpanded = false

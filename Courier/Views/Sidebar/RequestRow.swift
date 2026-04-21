@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import os
 
 struct RequestRow: View {
     @Bindable var request: APIRequest
@@ -71,6 +72,7 @@ struct RequestRow: View {
         .opacity(isBeingDragged ? 0.4 : 1)
         .scaleEffect(isBeingDragged ? 0.97 : 1)
         .onDrag {
+            SidebarLog.drag.debug("onDrag request=\(request.name, privacy: .public) id=\(request.id, privacy: .public)")
             dragState.begin(id: request.id, kind: .request)
             return NSItemProvider(object: request.id.uuidString as NSString)
         }

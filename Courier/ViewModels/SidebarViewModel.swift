@@ -1,6 +1,7 @@
 import Foundation
 import SwiftData
 import SwiftUI
+import os
 
 @Observable
 final class SidebarViewModel {
@@ -126,11 +127,13 @@ final class SidebarViewModel {
     /// Handles cross-container moves (root ↔ folder ↔ another folder) and same-container reorders.
     /// Rejects moves that would place a folder inside itself or one of its descendants.
     func moveItem(_ draggedId: UUID, into destination: ItemContainer, at insertIndex: Int) {
+        SidebarLog.drag.debug("moveItem dragged=\(draggedId, privacy: .public) into=\(destination.id, privacy: .public) idx=\(insertIndex)")
         // Resolve the dragged item.
         if let dragged = findFolder(id: draggedId) {
             // Prevent moving a folder into itself or any of its descendants.
             if case .folder(let destFolder) = destination {
                 if destFolder.id == dragged.id || isDescendant(destFolder, of: dragged) {
+                    SidebarLog.drag.debug("  reject — would nest folder into self/descendant")
                     return
                 }
             }
