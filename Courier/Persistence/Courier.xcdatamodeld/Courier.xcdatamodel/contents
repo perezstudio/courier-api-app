@@ -1,3 +1,179 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <model type="com.apple.IDECoreDataModeler.DataModel" documentVersion="1.0" lastSavedToolsVersion="24000" systemVersion="26.4" minimumToolsVersion="Automatic" sourceLanguage="Swift" usedWithSwiftData="NO" userDefinedModelVersionIdentifier="">
+    <entity name="CDWorkspace" representedClassName="CDWorkspace" syncable="YES">
+        <attribute name="activeEnvironmentID" optional="YES" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="createdAt" optional="NO" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="iconSymbolName" optional="NO" attributeType="String" defaultValueString="folder.fill"/>
+        <attribute name="id" optional="NO" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="name" optional="NO" attributeType="String" defaultValueString=""/>
+        <attribute name="sortOrder" optional="NO" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <relationship name="environments" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="CDEnvironment" inverseName="workspace" inverseEntity="CDEnvironment"/>
+        <relationship name="folders" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="CDFolder" inverseName="workspace" inverseEntity="CDFolder"/>
+        <relationship name="requests" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="CDRequest" inverseName="workspace" inverseEntity="CDRequest"/>
+        <relationship name="variables" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="CDVariable" inverseName="workspace" inverseEntity="CDVariable"/>
+        <uniquenessConstraints>
+            <uniquenessConstraint>
+                <constraint value="id"/>
+            </uniquenessConstraint>
+        </uniquenessConstraints>
+    </entity>
+    <entity name="CDFolder" representedClassName="CDFolder" syncable="YES">
+        <attribute name="id" optional="NO" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="isExpanded" optional="NO" attributeType="Boolean" defaultValueString="YES" usesScalarValueType="YES"/>
+        <attribute name="name" optional="NO" attributeType="String" defaultValueString=""/>
+        <attribute name="sortOrder" optional="NO" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <relationship name="parentFolder" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDFolder" inverseName="subfolders" inverseEntity="CDFolder"/>
+        <relationship name="requests" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="CDRequest" inverseName="folder" inverseEntity="CDRequest"/>
+        <relationship name="subfolders" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="CDFolder" inverseName="parentFolder" inverseEntity="CDFolder"/>
+        <relationship name="workspace" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDWorkspace" inverseName="folders" inverseEntity="CDWorkspace"/>
+        <uniquenessConstraints>
+            <uniquenessConstraint>
+                <constraint value="id"/>
+            </uniquenessConstraint>
+        </uniquenessConstraints>
+    </entity>
+    <entity name="CDRequest" representedClassName="CDRequest" syncable="YES">
+        <attribute name="authData" optional="YES" attributeType="Binary"/>
+        <attribute name="authType" optional="NO" attributeType="String" defaultValueString="inherit"/>
+        <attribute name="binaryBookmark" optional="YES" attributeType="Binary"/>
+        <attribute name="bodyContent" optional="YES" attributeType="String"/>
+        <attribute name="bodyType" optional="NO" attributeType="String" defaultValueString="none"/>
+        <attribute name="createdAt" optional="NO" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="followRedirects" optional="NO" attributeType="Boolean" defaultValueString="YES" usesScalarValueType="YES"/>
+        <attribute name="graphqlVariables" optional="YES" attributeType="String"/>
+        <attribute name="id" optional="NO" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="method" optional="NO" attributeType="String" defaultValueString="GET"/>
+        <attribute name="name" optional="NO" attributeType="String" defaultValueString=""/>
+        <attribute name="sortOrder" optional="NO" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="timeout" optional="NO" attributeType="Double" defaultValueString="30" usesScalarValueType="YES"/>
+        <attribute name="updatedAt" optional="NO" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="urlTemplate" optional="NO" attributeType="String" defaultValueString=""/>
+        <relationship name="folder" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDFolder" inverseName="requests" inverseEntity="CDFolder"/>
+        <relationship name="headers" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="CDHeader" inverseName="request" inverseEntity="CDHeader"/>
+        <relationship name="queryParams" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="CDQueryParam" inverseName="request" inverseEntity="CDQueryParam"/>
+        <relationship name="runs" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="CDRun" inverseName="request" inverseEntity="CDRun"/>
+        <relationship name="workspace" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDWorkspace" inverseName="requests" inverseEntity="CDWorkspace"/>
+        <uniquenessConstraints>
+            <uniquenessConstraint>
+                <constraint value="id"/>
+            </uniquenessConstraint>
+        </uniquenessConstraints>
+    </entity>
+    <entity name="CDHeader" representedClassName="CDHeader" syncable="YES">
+        <attribute name="id" optional="NO" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="isEnabled" optional="NO" attributeType="Boolean" defaultValueString="YES" usesScalarValueType="YES"/>
+        <attribute name="key" optional="NO" attributeType="String" defaultValueString=""/>
+        <attribute name="note" optional="YES" attributeType="String"/>
+        <attribute name="sortOrder" optional="NO" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="value" optional="NO" attributeType="String" defaultValueString=""/>
+        <relationship name="request" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDRequest" inverseName="headers" inverseEntity="CDRequest"/>
+        <uniquenessConstraints>
+            <uniquenessConstraint>
+                <constraint value="id"/>
+            </uniquenessConstraint>
+        </uniquenessConstraints>
+    </entity>
+    <entity name="CDQueryParam" representedClassName="CDQueryParam" syncable="YES">
+        <attribute name="id" optional="NO" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="isEnabled" optional="NO" attributeType="Boolean" defaultValueString="YES" usesScalarValueType="YES"/>
+        <attribute name="key" optional="NO" attributeType="String" defaultValueString=""/>
+        <attribute name="note" optional="YES" attributeType="String"/>
+        <attribute name="sortOrder" optional="NO" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="value" optional="NO" attributeType="String" defaultValueString=""/>
+        <relationship name="request" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDRequest" inverseName="queryParams" inverseEntity="CDRequest"/>
+        <uniquenessConstraints>
+            <uniquenessConstraint>
+                <constraint value="id"/>
+            </uniquenessConstraint>
+        </uniquenessConstraints>
+    </entity>
+    <entity name="CDEnvironment" representedClassName="CDEnvironment" syncable="YES">
+        <attribute name="id" optional="NO" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="name" optional="NO" attributeType="String" defaultValueString=""/>
+        <attribute name="sortOrder" optional="NO" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <relationship name="variables" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="CDVariable" inverseName="environment" inverseEntity="CDVariable"/>
+        <relationship name="workspace" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDWorkspace" inverseName="environments" inverseEntity="CDWorkspace"/>
+        <uniquenessConstraints>
+            <uniquenessConstraint>
+                <constraint value="id"/>
+            </uniquenessConstraint>
+        </uniquenessConstraints>
+    </entity>
+    <entity name="CDVariable" representedClassName="CDVariable" syncable="YES">
+        <attribute name="id" optional="NO" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="isEnabled" optional="NO" attributeType="Boolean" defaultValueString="YES" usesScalarValueType="YES"/>
+        <attribute name="isSecret" optional="NO" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
+        <attribute name="key" optional="NO" attributeType="String" defaultValueString=""/>
+        <attribute name="sortOrder" optional="NO" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="value" optional="NO" attributeType="String" defaultValueString=""/>
+        <relationship name="environment" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDEnvironment" inverseName="variables" inverseEntity="CDEnvironment"/>
+        <relationship name="workspace" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDWorkspace" inverseName="variables" inverseEntity="CDWorkspace"/>
+        <uniquenessConstraints>
+            <uniquenessConstraint>
+                <constraint value="id"/>
+            </uniquenessConstraint>
+        </uniquenessConstraints>
+    </entity>
+    <entity name="CDRun" representedClassName="CDRun" syncable="YES">
+        <attribute name="createdAt" optional="NO" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="duration" optional="YES" attributeType="Double" usesScalarValueType="NO"/>
+        <attribute name="errorMessage" optional="YES" attributeType="String"/>
+        <attribute name="id" optional="NO" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="isStarred" optional="NO" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
+        <attribute name="requestMethod" optional="NO" attributeType="String" defaultValueString=""/>
+        <attribute name="requestURL" optional="NO" attributeType="String" defaultValueString=""/>
+        <attribute name="size" optional="YES" attributeType="Integer 64" usesScalarValueType="NO"/>
+        <attribute name="statusCode" optional="YES" attributeType="Integer 32" usesScalarValueType="NO"/>
+        <attribute name="statusRaw" optional="NO" attributeType="String" defaultValueString="pending"/>
+        <attribute name="statusText" optional="YES" attributeType="String"/>
+        <attribute name="timingJSON" optional="YES" attributeType="String"/>
+        <relationship name="request" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDRequest" inverseName="runs" inverseEntity="CDRequest"/>
+        <relationship name="requestSnapshot" optional="YES" maxCount="1" deletionRule="Cascade" destinationEntity="CDRunRequestSnapshot" inverseName="run" inverseEntity="CDRunRequestSnapshot"/>
+        <relationship name="responseBody" optional="YES" maxCount="1" deletionRule="Cascade" destinationEntity="CDRunResponseBody" inverseName="run" inverseEntity="CDRunResponseBody"/>
+        <relationship name="responseHeaders" optional="YES" maxCount="1" deletionRule="Cascade" destinationEntity="CDRunResponseHeaders" inverseName="run" inverseEntity="CDRunResponseHeaders"/>
+        <uniquenessConstraints>
+            <uniquenessConstraint>
+                <constraint value="id"/>
+            </uniquenessConstraint>
+        </uniquenessConstraints>
+    </entity>
+    <entity name="CDRunResponseBody" representedClassName="CDRunResponseBody" syncable="YES">
+        <attribute name="data" optional="YES" attributeType="Binary" allowsExternalBinaryDataStorage="YES"/>
+        <attribute name="id" optional="NO" attributeType="UUID" usesScalarValueType="NO"/>
+        <relationship name="run" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDRun" inverseName="responseBody" inverseEntity="CDRun"/>
+        <uniquenessConstraints>
+            <uniquenessConstraint>
+                <constraint value="id"/>
+            </uniquenessConstraint>
+        </uniquenessConstraints>
+    </entity>
+    <entity name="CDRunResponseHeaders" representedClassName="CDRunResponseHeaders" syncable="YES">
+        <attribute name="id" optional="NO" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="json" optional="NO" attributeType="String" defaultValueString=""/>
+        <relationship name="run" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDRun" inverseName="responseHeaders" inverseEntity="CDRun"/>
+        <uniquenessConstraints>
+            <uniquenessConstraint>
+                <constraint value="id"/>
+            </uniquenessConstraint>
+        </uniquenessConstraints>
+    </entity>
+    <entity name="CDRunRequestSnapshot" representedClassName="CDRunRequestSnapshot" syncable="YES">
+        <attribute name="id" optional="NO" attributeType="UUID" usesScalarValueType="NO"/>
+        <attribute name="json" optional="NO" attributeType="String" defaultValueString=""/>
+        <relationship name="run" optional="YES" maxCount="1" deletionRule="Nullify" destinationEntity="CDRun" inverseName="requestSnapshot" inverseEntity="CDRun"/>
+        <uniquenessConstraints>
+            <uniquenessConstraint>
+                <constraint value="id"/>
+            </uniquenessConstraint>
+        </uniquenessConstraints>
+    </entity>
+    <entity name="CDUIState" representedClassName="CDUIState" syncable="YES">
+        <attribute name="json" optional="NO" attributeType="String" defaultValueString=""/>
+        <attribute name="key" optional="NO" attributeType="String" defaultValueString=""/>
+        <uniquenessConstraints>
+            <uniquenessConstraint>
+                <constraint value="key"/>
+            </uniquenessConstraint>
+        </uniquenessConstraints>
+    </entity>
 </model>
