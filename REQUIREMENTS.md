@@ -1,554 +1,492 @@
 # Courier — Requirements & Implementation Plan
 
-A native macOS API client inspired by [Bruno](https://www.usebruno.com/), built with SwiftUI and SwiftData, following the design language and layout patterns of the Admiral app.
+A **fully native macOS API client** in the mold of Postman. Pure **AppKit** UI, **entirely local**, persisted with **Core Data**. Built from stock system components throughout: system titlebar, unified toolbar, source-list sidebar, native window tabs, and a split content area with results on the right.
+
+> **Status: clean slate.** This document supersedes all previous plans. No code from the current tree carries forward; the existing sources are deleted in Phase 0.
 
 ---
 
-## 1. Architecture Overview
+## 1. Product Definition
 
-### Layout Concept
+Courier is a native desktop API client. It should feel like an app Apple shipped — not a web app in a window, not a SwiftUI approximation of one, and not a custom-drawn interface wearing native clothes.
 
-The window has a **unified sidebar-material background** across the entire window. The content area is an **inset rounded rectangle** ("content card") that floats within this background with padding on all sides (bottom, trailing, and between sidebar). The inspector lives **inside** this content card, not as a separate window-level panel.
+**v1 scope — "core client + environments + import":**
 
-A **tab bar** sits above the content card in the window background material. The selected tab connects visually to the content card below it (like Chrome's tabs — the active tab merges into the card surface). The tab bar + content card together form the main working area.
+| In scope | Out of scope (post-v1) |
+|---|---|
+| Workspaces, collections (folder tree), requests | Collection runner / sequenced runs |
+| All common body types + auth types | Test assertions, pass/fail reports |
+| Environment & collection variables, `{{var}}` resolution | JavaScript pre/post-request scripting (`pm.*` shim) |
+| Send / cancel / timing / redirects / cookies | Mock servers, monitors, API documentation |
+| Local run history | Any cloud sync, accounts, or collaboration |
+| Postman v2.1 + curl + OpenAPI import, Postman export | Team workspaces, comments, sharing |
+
+**Non-negotiables:**
+
+1. **AppKit only.** Zero `import SwiftUI` in the app target. Enforced by a build-phase check (§10.3).
+2. **System components first.** If AppKit ships a control for a job, use it. Custom `NSView` subclasses require a written justification (§7.4) — there are exactly three in this plan, and all three are content rendering, not chrome.
+3. **Entirely local.** No account, no server, no sync, no telemetry. The network stack is used only for the user's own requests.
+4. **Secrets never sit in plaintext on disk.** Secret values live in the Keychain; Core Data stores only a reference.
+5. **Core Data is the source of truth.** Imported files are ingested, never read live.
+
+**On portability.** With sync gone, moving collections between machines is a file operation: Postman-format export/import plus a whole-library backup command (§5.4). If cross-machine work becomes a real need later, the natural answer is file-backed collections (a git-friendly directory format) rather than adding a sync service — noted in §12, not built in v1.
+
+---
+
+## 2. Tech Stack
+
+| Layer | Choice |
+|---|---|
+| Deployment target | macOS 15 (Sequoia) |
+| Language | Swift 6, strict concurrency enabled |
+| UI | AppKit, 100% programmatic — no Storyboards, no XIBs, no SwiftUI |
+| Persistence | Core Data (`NSPersistentContainer`), single local SQLite store |
+| Secrets | Keychain Services (`kSecClassGenericPassword`) |
+| Networking | `URLSession` + `URLSessionTaskMetrics` |
+| Text editing | `NSTextView` on TextKit 2, custom `NSTextStorage` delegate for highlighting |
+| Serialization | `Codable` for import/export |
+| Tests | Swift Testing (unit), XCUITest (smoke) |
+
+**Deliberately not used:** SwiftUI, SwiftData, CloudKit, Combine (plain callbacks + `NSFetchedResultsController` instead), third-party dependencies of any kind.
+
+**Entitlements:** App Sandbox, `com.apple.security.network.client`, `com.apple.security.files.user-selected.read-write` (import/export, binary bodies), `com.apple.security.files.bookmarks.app-scope` (security-scoped bookmarks for binary body files). No iCloud, no push.
+
+---
+
+## 3. Architecture
+
+### 3.1 Layering
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│● ● ● Sidebar  │  ┌─Tab1─┐ Tab2   Tab3                          │
-│     toolbar    │  │      └──────────────────────────────────┐    │
-│                │  │  ┌────────────────────┬─────────────┐   │    │
-│ [WS1]         │  │  │ Method + URL + Send│ Env Selector │   │    │
-│ [WS2] ←       │  │  ├────────────────────┴─────────────┤   │    │
-│ [WS3]         │  │  │                     │             │   │    │
-│                │  │  │  Request Editor     │  Inspector  │   │    │
-│ Folders        │  │  │   Params / Headers  │  Response   │   │    │
-│  └ Req         │  │  │   Body / Auth       │  Headers    │   │    │
-│  └ Req         │  │  │                     │  Body       │   │    │
-│ Folders        │  │  │                     │  Timing     │   │    │
-│  └ Req         │  │  └─────────────────────┴─────────────┘   │    │
-│                │  └──────────────────────────────────────────┘    │
-│                │                                     (padding)    │
-└────────────────┴─────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│  AppKit view controllers  (Windows/, Views/)            │
+│    - own no truth; render state, forward intent         │
+├─────────────────────────────────────────────────────────┤
+│  Controllers / Stores  (Controllers/)                   │
+│    - LibraryController (app-wide), WindowController-    │
+│      scoped Editor/Response controllers                 │
+├─────────────────────────────────────────────────────────┤
+│  Services  (Services/)                                  │
+│    - RequestExecutor, VariableResolver, SecretStore,    │
+│      Importers/Exporters, SyntaxHighlighter             │
+├─────────────────────────────────────────────────────────┤
+│  Persistence  (Persistence/)                            │
+│    - CoreDataStack, Repositories                        │
+│    - CDWorkspace / CDFolder / CDRequest / …             │
+└─────────────────────────────────────────────────────────┘
 ```
 
-### Key Layout Rules
+**Rule:** view controllers never touch `NSManagedObjectContext` directly. They talk to repositories that expose value types (`RequestSnapshot`, `FolderNode`) and accept mutations. This keeps managed objects — which are not `Sendable` — off the UI surface and makes the whole layer testable.
 
-1. **No titlebar** — The window has no native titlebar. `titlebarAppearsTransparent = true`, `titleVisibility = .hidden`, `styleMask` includes `.fullSizeContentView`. The entire window is edge-to-edge content.
-2. **Traffic lights** — The standard window buttons (close/minimize/zoom) overlay the top-left of the sidebar. The sidebar toolbar row reserves space on its leading edge so content doesn't overlap the traffic lights.
-3. **Window background** — Sidebar material (`VisualEffectBackground(material: .sidebar)`) fills the entire window, including behind the tab bar and padding areas.
-4. **Content card** — A rounded rectangle with its own background material (distinct from sidebar, e.g. `.contentBackground` or a slightly lighter surface). Has `cornerRadius` on all corners. Separated from the window edges by padding (bottom, trailing) and from the sidebar by a gap.
-5. **Tab bar** — Lives in the window background area above the content card. The active tab visually connects to the content card (tab bottom edge merges with card top edge, same background). Inactive tabs float in the window background. Chrome-style tab shape. Top-aligned with the sidebar toolbar row.
-6. **Inspector inside content card** — The inspector is a right-side panel within the content card, separated from the request editor by a vertical divider. It shares the content card's background. Can be collapsed/expanded.
-7. **Sidebar** — Flush to the window's leading edge, edge-to-edge top to bottom. Uses the window's sidebar material naturally.
-8. **Two-panel split (not three)** — The NSSplitViewController only manages Sidebar | Content. The content card internally manages its own request editor / inspector split.
-9. **Draggable region** — The tab bar area and sidebar toolbar area act as the window drag region (since there's no titlebar to grab).
+### 3.2 Observation without SwiftUI
 
-**Tech Stack:**
-- macOS 15+ (Sequoia)
-- SwiftUI + AppKit (NSSplitViewController for two-panel layout: Sidebar | Main Area)
-- SwiftData for local persistence
-- `@Observable` ViewModels + NotificationCenter (matching Admiral patterns)
-- URLSession for HTTP execution
-- Native Swift `Codable` for import/export
+There is no `@Observable` / `@State` here. Three mechanisms, used deliberately:
+
+| Need | Mechanism |
+|---|---|
+| Persisted collections driving lists/trees | `NSFetchedResultsController` → delegate → targeted `NSOutlineView` / `NSTableView` row updates |
+| Ephemeral UI state (response pane collapsed, in-flight run) | Plain controller-owned state objects with typed closure callbacks |
+| Cross-window events (request renamed, workspace changed, tree reordered) | `NotificationCenter` with typed `Notification.Name` constants and strongly-typed payload wrappers |
+
+Reload **rows, not whole views.** `reloadData()` on every change is the failure mode that makes AppKit apps feel worse than the SwiftUI they replaced.
+
+### 3.3 Concurrency
+
+- `viewContext` is `@MainActor`-confined. Every view controller and repository facing the UI is `@MainActor`.
+- Direct user edits write on `viewContext`; bulk work (imports, history pruning, run persistence) goes through `container.performBackgroundTask`.
+- **Never pass `NSManagedObject` across an actor boundary.** Pass `NSManagedObjectID` (Sendable) or a value-type snapshot.
+- `viewContext.automaticallyMergesChangesFromParent = true`.
+- `URLSession` work is fully structured-concurrency based; each in-flight run holds a `Task` handle for cancellation.
 
 ---
 
-## 2. Data Model
+## 4. Data Model
 
-### 2.1 Core Entities (SwiftData)
+### 4.1 One store, real relationships
 
-```swift
-@Model class Workspace {
-    var id: UUID
-    var name: String
-    var sortOrder: Int
-    var createdAt: Date
-    @Relationship(deleteRule: .cascade) var folders: [Folder]
-    @Relationship(deleteRule: .cascade) var environments: [Environment]
-    var activeEnvironmentId: UUID?
-}
+A single local SQLite store in `~/Library/Application Support/Courier/Courier.sqlite`, one model configuration, ordinary Core Data throughout. There are no CloudKit constraints to design around, which means:
 
-@Model class Folder {
-    var id: UUID
-    var name: String
-    var sortOrder: Int
-    var isExpanded: Bool
-    var workspace: Workspace?
-    var parentFolder: Folder?
-    @Relationship(deleteRule: .cascade) var subFolders: [Folder]
-    @Relationship(deleteRule: .cascade) var requests: [Request]
-}
+- **Non-optional attributes** where the domain says non-optional.
+- **Unique constraints** on `id` — the database enforces identity instead of an application-level dedupe pass.
+- **Real relationships everywhere**, including run history → request. (Under the earlier CloudKit plan this had to be a bare `UUID` because relationships can't cross store configurations. That constraint is gone; runs are properly related and cascade-delete with their request.)
+- **Integer `sortOrder`** with renumber-on-reorder. The fractional-rank scheme in the earlier plan existed to minimize CloudKit write churn; with local-only writes, renumbering a folder's children is bounded and markedly simpler — no float drift, no normalization pass.
 
-@Model class Request {
-    var id: UUID
-    var name: String
-    var sortOrder: Int
-    var method: String          // GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD
-    var urlTemplate: String     // URL with {{variable}} placeholders
-    var folder: Folder?
-    @Relationship(deleteRule: .cascade) var headers: [Header]
-    @Relationship(deleteRule: .cascade) var queryParams: [QueryParam]
-    var bodyType: String?       // none, json, xml, formData, urlEncoded, binary, graphql
-    var bodyContent: String?
-    var authType: String?       // none, bearer, basic, apiKey
-    var authData: String?       // JSON-encoded auth config
-    var preRequestScript: String?
-    var postResponseScript: String?
-    var createdAt: Date
-    var updatedAt: Date
-}
+Heavy payloads still live in **separate entities** so that listing runs doesn't fault in megabytes of response data. That was always a Core Data faulting concern, not a sync concern, and it still applies.
 
-@Model class Header {
-    var id: UUID
-    var key: String
-    var value: String
-    var isEnabled: Bool
-    var request: Request?
-}
+### 4.2 Entities
 
-@Model class QueryParam {
-    var id: UUID
-    var key: String
-    var value: String
-    var isEnabled: Bool
-    var request: Request?
-}
+```
+CDWorkspace
+  id: UUID [unique]        name: String
+  sortOrder: Int32         iconSymbolName: String = "folder.fill"
+  createdAt: Date          activeEnvironmentID: UUID?
+  → folders (cascade, inverse: CDFolder.workspace)
+  → requests (cascade, inverse: CDRequest.workspace)     // workspace-root requests
+  → environments (cascade, inverse: CDEnvironment.workspace)
+  → variables (cascade, inverse: CDVariable.workspace)   // collection-scope variables
 
-@Model class Environment {
-    var id: UUID
-    var name: String
-    var workspace: Workspace?
-    @Relationship(deleteRule: .cascade) var variables: [EnvironmentVariable]
-}
+CDFolder
+  id: UUID [unique]        name: String
+  sortOrder: Int32         isExpanded: Bool = true
+  workspace: CDWorkspace?  parentFolder: CDFolder?
+  → subfolders (cascade)   → requests (cascade)
 
-@Model class EnvironmentVariable {
-    var id: UUID
-    var key: String
-    var value: String
-    var isSecret: Bool
-    var environment: Environment?
-}
+CDRequest
+  id: UUID [unique]        name: String
+  sortOrder: Int32         method: String = "GET"
+  urlTemplate: String = ""
+  bodyType: String = "none"        // none|raw|json|xml|text|html|formData|urlEncoded|binary|graphql
+  bodyContent: String?
+  binaryBookmark: Data?            // security-scoped bookmark for binary bodies
+  graphqlVariables: String?
+  authType: String = "inherit"     // inherit|none|bearer|basic|apiKey
+  authData: Data?                  // JSON blob; secret fields hold Keychain refs
+  followRedirects: Bool = true     timeout: Double = 30
+  createdAt: Date          updatedAt: Date
+  folder: CDFolder?        workspace: CDWorkspace?       // exactly one is non-nil
+  → headers (cascade)      → queryParams (cascade)       → runs (cascade)
+
+CDHeader / CDQueryParam
+  id: UUID [unique]   key: String   value: String
+  isEnabled: Bool = true            sortOrder: Int32
+  note: String?                     request: CDRequest?
+
+CDEnvironment
+  id: UUID [unique]   name: String   sortOrder: Int32
+  workspace: CDWorkspace?            → variables (cascade)
+
+CDVariable
+  id: UUID [unique]   key: String
+  value: String = ""                 // EMPTY when isSecret — real value is in the Keychain
+  isSecret: Bool = false             isEnabled: Bool = true
+  sortOrder: Int32
+  environment: CDEnvironment?        workspace: CDWorkspace?   // env-scope or collection-scope
+
+CDRun
+  id: UUID [unique]        request: CDRequest?           // real relationship
+  statusRaw: String = "pending"      // pending|running|completed|failed|cancelled
+  isStarred: Bool = false
+  statusCode: Int32?       statusText: String?
+  duration: Double?        size: Int64?      errorMessage: String?
+  requestMethod: String    requestURL: String
+  createdAt: Date          timingJSON: String?           // URLSessionTaskMetrics breakdown
+  → responseBody (cascade) → responseHeaders (cascade)   → requestSnapshot (cascade)
+
+CDRunResponseBody      data: Binary (allowsExternalBinaryDataStorage) · run: CDRun?
+CDRunResponseHeaders   json: String · run: CDRun?
+CDRunRequestSnapshot   json: String · run: CDRun?        // resolved URL/headers/body actually sent
+
+CDUIState
+  key: String [unique]   json: String                    // per-window open request, split positions
 ```
 
-### 2.2 Transient Models (In-Memory)
+### 4.3 History retention
 
-```swift
-struct ResponseResult {
-    var statusCode: Int
-    var statusText: String
-    var headers: [String: String]
-    var body: Data
-    var bodyString: String?
-    var duration: TimeInterval
-    var size: Int
-}
+Run history is the only unbounded growth in the store. A retention policy runs at launch on a background context: keep the last *N* runs per request (default 50, configurable) plus every starred run, batch-delete the rest. External binary storage means the response-body files are reclaimed with them.
+
+---
+
+## 5. Store Management
+
+### 5.1 Stack
+
+`NSPersistentContainer` with a single store description. No persistent history tracking, no remote-change notifications, no dedupe pass, no merge-policy tuning — all of that existed to serve CloudKit.
+
+### 5.2 Schema migration
+
+Versioned `.xcdatamodeld` with lightweight migration (`shouldMigrateStoreAutomatically` + `shouldInferMappingModelAutomatically`). The schema is **not** append-only — entities and attributes can be renamed or removed across versions with a mapping model. This meaningfully lowers the cost of getting the model wrong, and is why Phase 1 no longer needs to be perfect before the UI exists.
+
+### 5.3 Failure handling
+
+If the store fails to open, the app does **not** silently delete it (the current tree's behavior, and a data-loss bug). It moves the store aside to `Courier-corrupt-<timestamp>.sqlite`, opens a fresh one, and tells the user where the old file went with a Reveal in Finder button.
+
+### 5.4 Backup & portability
+
+A **Back Up Library…** command writes the full store plus a manifest to a user-chosen location via `NSSavePanel`; **Restore from Backup…** reverses it behind a confirmation. Together with Postman-format export, this is the v1 answer to "how do I get my collections onto my other Mac."
+
+---
+
+## 6. Secrets
+
+Secret environment variables and secret auth fields (bearer tokens, passwords, API keys) never enter Core Data. This matters just as much locally as it did with sync: the store is an unencrypted SQLite file, and API tokens sitting in plaintext in `Application Support` is a bad posture regardless of whether anything syncs.
+
+- Core Data holds `isSecret = true` and an empty `value`. The Keychain item is addressed by a deterministic account string: `variableID.uuidString`, service `"com.perezstudio.Courier.secrets"`.
+- `SecretStore` is a thin protocol with a real Keychain implementation and an in-memory one for tests.
+- Secrets are masked in the UI (revealed on explicit click), redacted from run request-snapshots, and excluded from every export and backup path.
+- Deleting a variable deletes its Keychain item; a launch-time orphan sweep catches any that slipped through.
+
+---
+
+## 7. UI Architecture (AppKit)
+
+### 7.1 Window chrome & layout
+
+Standard macOS document-style window: system titlebar with a unified toolbar, **native window tabs**, a source-list sidebar, and a split content area with the response on the right.
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│ ● ● ●  ⌸ │         Courier — Get User        │ [Env ▾]  🔍  ⊕  ⚙    │  ← unified NSToolbar
+├──────────────────────────────────────────────────────────────────────┤
+│  ╭ Get User ╮  Create User   List Orders                      ⊕      │  ← SYSTEM tab bar
+├────────┬─────────────────────────────────────────────────────────────┤
+│        │ [GET ▾]  https://api.example.com/users/{{id}}     [ Send ]  │
+│ [WS ▾] ├───────────────────────────────┬─────────────────────────────┤
+│        │ ⟨Params│Headers│Body│Auth│Var⟩│ 200 OK · 142 ms · 1.2 KB    │
+│ Users  │                               │ ⟨Body│Headers│Cookies│Time⟩ │
+│  ▸ Get │                               │                             │
+│  ▸ Post│      Request Editor           │        Response             │
+│ Orders │      (NSTabViewController)    │   (NSTabViewController)     │
+│  ▸ List│                               │                             │
+└────────┴───────────────────────────────┴─────────────────────────────┘
+  source     ← inner NSSplitViewController, draggable divider →
+   list
 ```
 
----
+1. **System titlebar.** Ordinary `NSWindow`, `.titled` style, `toolbarStyle = .unified`. Traffic lights, title, and full-screen behavior are entirely the system's.
+2. **Window title & subtitle.** `window.title` is the active request's name; `window.subtitle` is its collection path. This also supplies the **native tab titles** for free, and is correct in the Window menu and Mission Control.
+3. **Source-list sidebar.** `NSSplitViewItem(sidebarWithViewController:)` supplies the material, full-height behavior, and collapse animation. Inside it, `NSOutlineView` with `style = .sourceList` — the system draws the rounded selection, vibrancy, row heights, group headers, and disclosure triangles.
+4. **`NSTrackingSeparatorToolbarItem`** bound to the outer split view at index 0, so the toolbar separator tracks the sidebar divider as the user drags it. This is the detail that makes a unified sidebar look right rather than almost right.
+5. **Native window tabs** — see §7.2. The tab bar, its `+` button, drag-to-reorder, drag-out-to-new-window, tab overview, and the Window menu's Show Tab Bar / Merge All Windows / Move Tab to New Window are all system-provided.
+6. **Content area** stacks vertically: URL bar → inner split view.
+7. **Inner split** — nested `NSSplitViewController`, two non-sidebar items: request editor (left) and response (right). Draggable divider, response pane collapsible via Cmd+Opt+I, positions persisted with `autosaveName`.
+8. **Section switching** on both sides is `NSTabViewController` with `tabStyle = .segmentedControlOnTop` — the stock control for switching content panes.
+9. **Frame persistence** via `setFrameAutosaveName`; per-window open request and split positions via `CDUIState`.
 
-## 3. Feature Requirements
+### 7.2 Request tabs are native window tabs
 
-### 3.1 Sidebar
+This is the significant change from the previous draft, which specified a hand-rolled tab strip.
 
-| Requirement | Details |
+macOS already has tabs: `NSWindow.tabbingMode = .preferred` with a shared `tabbingIdentifier` makes every Courier window a tab in one tab group. **One request = one `NSWindow`**, stacked by the system.
+
+What comes free: the tab bar and its visual design, `+` button, drag reorder, drag a tab out into its own window, drag it back, tab overview, Cmd+Shift+[ / ], the full Window menu, and — because tab titles come from `window.title` — correct labels with no extra code.
+
+**Navigation model, matching Finder and Safari:** sidebar selection navigates the *current* tab; Cmd+click a request, or Cmd+T, opens a new tab. Users already know this.
+
+**The consequence to design around:** each tab is a full window, so each has its own sidebar and its own outline view. Tree state that should feel global — expansion, active workspace, scroll position, search filter — is therefore owned by a single app-wide `LibraryController` that all windows observe; only *selection* is per-window. Get this wrong and expanding a folder in one tab won't expand it in the next, which reads as a bug.
+
+This buys back all of Phase 4 from the previous plan, and removes the app's hardest custom-drawing task.
+
+### 7.3 Control mapping
+
+Every region, and the stock AppKit component that implements it:
+
+| Region | Implementation |
 |---|---|
-| **Workspace Switcher** | Horizontal ScrollView at the top of the sidebar with `.scrollTargetBehavior(.paging)`. Each "page" is the full width of the sidebar. Shows workspace name + request count. Swipe or click dots to switch. |
-| **Collection Tree** | Custom `ForEach` loops (no `List`). Folders are expandable/collapsible with disclosure chevrons. Requests show method badge (colored) + name. |
-| **Drag & Drop** | Reorder folders and requests within a workspace. Move requests between folders. String-based drag items matching Admiral pattern. |
-| **Context Menus** | Right-click on workspace/folder/request for: New Folder, New Request, Rename, Duplicate, Delete. |
-| **Search/Filter** | Text field at top of tree to filter requests by name. |
-| **Visual Style** | `VisualEffectBackground(material: .sidebar)`. Opacity-based hover states. SF Symbol icons. Match Admiral's sidebar styling. |
+| Window | `NSWindow` (titled, unified toolbar, `tabbingMode = .preferred`) |
+| Request tabs | **System window tabs** — no custom view |
+| Toolbar | `NSToolbar` + delegate; `NSTrackingSeparatorToolbarItem`, `NSSearchToolbarItem`, `.toggleSidebar`, autosaved configuration |
+| Root split | `NSSplitViewController`, item 0 via `sidebarWithViewController:` |
+| Workspace switcher | `NSPopUpButton` at the sidebar head |
+| Collection tree | `NSOutlineView`, `style = .sourceList`, standard `NSTableCellView` (`imageView` + `textField`), group rows for sections, system disclosure triangles, `NSOutlineViewDataSource` drag/drop |
+| Method badge in tree rows | `NSTableCellView` with a second `NSTextField` styled per method — content, not chrome |
+| Content/response split | Nested `NSSplitViewController`, response item collapsible, `autosaveName` set |
+| Method picker | `NSPopUpButton` with per-item attributed titles |
+| URL bar | `NSTextField`; `{{variable}}` highlighting applied to the field editor via `NSTextStorageDelegate`; resolved-value tooltips |
+| Send / Cancel | `NSButton` (`.push`), title and action swapped by state |
+| Request sections (Params/Headers/Body/Auth/Vars) | `NSTabViewController`, `tabStyle = .segmentedControlOnTop` |
+| Response sections (Body/Headers/Cookies/Timeline) | `NSTabViewController`, `tabStyle = .segmentedControlOnTop` |
+| Body view mode (pretty/raw/preview) | `NSSegmentedControl` |
+| Key-value editors | `NSTableView` (view-based) — checkbox, key, value, note, delete columns; inline `NSTextField` editing; tab-to-next-field |
+| Body editor | `NSTextView` (TextKit 2) + `NSRulerView` line numbers + `NSTextStorageDelegate` highlighting |
+| Response body | `NSTextView` (read-only), `NSOutlineView` (JSON tree), `NSImageView` (images) |
+| Response headers / cookies | `NSTableView` (view-based) |
+| Run history | `NSTableView` (view-based) |
+| Loading / progress | `NSProgressIndicator` |
+| Status badge | `NSTextField` with a system-colored background layer |
+| Environment editor | Sheet-presented `NSWindowController` containing an `NSSplitViewController` |
+| Settings | `NSTabViewController` with `tabStyle = .toolbar` — the stock Settings-window layout |
+| Menus & shortcuts | `NSMenu` in code; actions via the responder chain with `validateMenuItem(_:)` |
+| Dialogs | `NSAlert`, `NSOpenPanel`, `NSSavePanel` |
 
-### 3.2 Tab Bar (Window-Level)
+### 7.4 The three custom views, justified
 
-| Requirement | Details |
-|---|---|
-| **Position** | Above the content card, in the window background material area. Each tab represents an open request. |
-| **Chrome-style tabs** | Active tab connects to the content card below (shared background, no visible border between them). Inactive tabs float in the window background with a distinct, muted appearance. Curved tab shape with bottom corners that merge into the card. |
-| **Tab content** | Method badge (colored) + request name. Close button on hover. |
-| **New tab button** | `+` button at the end of the tab strip to create a new unsaved request. |
-| **Overflow** | When tabs exceed available width, horizontally scrollable with fade edges. |
-| **Drag reorder** | Tabs can be reordered by dragging. |
+Per §1.2, every custom `NSView` needs a reason. There are three, and all render content rather than chrome:
 
-### 3.3 Content Card
+1. **`TimelineChartView`** — a bar chart of `URLSessionTaskMetrics` phases. AppKit ships no chart control.
+2. **`HexDumpView`** — fallback rendering for binary response bodies. No system equivalent.
+3. **`EmptyStateView`** — centered symbol + label + optional button. macOS has no empty-state control; this is a thin `NSStackView` composition rather than custom drawing.
 
-The content card is the inset rounded rectangle that contains both the request editor and the inspector.
+Everything else in §7.3 is a stock control. If a fourth candidate appears during implementation, it needs the same justification or it doesn't get built.
 
-| Requirement | Details |
-|---|---|
-| **Shape** | Rounded rectangle with consistent corner radius (~10–12pt). Top-left corner aligns with the active tab's left edge when possible. |
-| **Background** | Distinct from the window/sidebar material — a slightly lighter or opaque surface (e.g. `Color(nsColor: .controlBackgroundColor)` or a custom surface color). |
-| **Padding** | Gap between sidebar and card (~12pt). Padding on trailing and bottom edges (~12pt). The tab bar occupies the top, so no top padding — the card connects to the active tab. |
-| **Internal layout** | Horizontal split: Request Editor (left) | Inspector (right). Resizable divider between them. Inspector can be collapsed. |
+### 7.5 Native wins to actually claim
 
-### 3.4 Content Card — Request Editor (Left Side)
+Going AppKit costs code; these are the things that make it pay:
 
-| Requirement | Details |
-|---|---|
-| **URL Bar** | At the top of the request editor area. Method dropdown (GET/POST/PUT/PATCH/DELETE/OPTIONS/HEAD) + URL text field + Send button. URL field parses query params automatically and syncs with Params tab. |
-| **Section Tab Bar** | Below the URL bar: **Params**, **Headers**, **Body**, **Auth**, **Variables**, **Scripts**. ForgeTabBar-style with matchedGeometryEffect selection indicator. |
-| **Params Tab** | Key-value editor with enable/disable toggles per row. Auto-synced with URL query string. Add/remove rows. |
-| **Headers Tab** | Same key-value editor pattern. Common headers autocomplete (Content-Type, Authorization, etc.). |
-| **Body Tab** | Body type selector (None, JSON, XML, Form Data, URL Encoded, Binary, GraphQL). JSON/XML: code editor with syntax highlighting. Form Data / URL Encoded: key-value editor. Binary: file picker. GraphQL: query editor + variables editor side by side. |
-| **Auth Tab** | Auth type selector (None, Bearer Token, Basic Auth, API Key). Dynamic form based on auth type. Values support `{{variable}}` interpolation. |
-| **Variables Tab** | Shows resolved variables from the active environment. Inline preview of what `{{variable}}` resolves to. |
-| **Scripts Tab** | Pre-request and post-response script editors. JavaScript-compatible scripting (stretch goal). |
-
-### 3.5 Content Card — Inspector (Right Side)
-
-| Requirement | Details |
-|---|---|
-| **Background** | Shares the content card background. Separated from the request editor by a thin vertical divider. |
-| **Collapse** | Can be collapsed to give the request editor full width. Toggle via button or keyboard shortcut. |
-| **Response Header** | Status code (color-coded: green 2xx, yellow 3xx, red 4xx/5xx), duration (ms), response size. |
-| **Tab Bar** | Tabs: **Body**, **Headers**, **Cookies**, **Timeline**. |
-| **Body Tab** | Auto-formatted based on Content-Type. JSON: collapsible tree view + raw toggle. HTML/XML: syntax highlighted. Images: inline preview. Other: hex/raw view. |
-| **Headers Tab** | Response headers as a key-value list. |
-| **Cookies Tab** | Parsed Set-Cookie headers in a structured table. |
-| **Timeline Tab** | Request lifecycle breakdown: DNS, TCP, TLS, TTFB, download. |
-| **Empty State** | "Send a request to see the response" placeholder when no response exists. |
-
-### 3.6 HTTP Client
-
-| Requirement | Details |
-|---|---|
-| **Engine** | URLSession-based. Configurable timeout, follow redirects toggle, SSL verification toggle. |
-| **Variable Interpolation** | Resolve `{{variable}}` placeholders from active environment before sending. |
-| **Request History** | Store last N responses per request for quick comparison (stretch). |
-| **Cancel** | Ability to cancel in-flight requests. Send button transforms to Cancel while loading. |
-
-### 3.7 Import / Export
-
-| Requirement | Details |
-|---|---|
-| **Bruno YAML** | Import Bruno collection directories (folder structure + .bru files). |
-| **Postman JSON** | Import Postman v2.1 collection exports. |
-| **OpenAPI** | Import OpenAPI 3.x specs and generate requests (stretch). |
-| **Export** | Export workspace as Bruno-compatible YAML or Postman JSON. |
-
-### 3.8 Environment Management
-
-| Requirement | Details |
-|---|---|
-| **Environment Selector** | Dropdown in the toolbar or sidebar header to switch active environment. |
-| **Environment Editor** | Sheet/panel to create, edit, delete environments and their variables. |
-| **Secret Variables** | Variables marked as secret are masked in the UI and excluded from exports. |
-
-### 3.9 Window & App Chrome
-
-| Requirement | Details |
-|---|---|
-| **No Titlebar** | `titlebarAppearsTransparent = true`, `titleVisibility = .hidden`, `styleMask` includes `.fullSizeContentView`, `titlebarSeparatorStyle = .none`. Edge-to-edge custom content. |
-| **Traffic Lights** | Standard close/minimize/zoom buttons in the top-left of the sidebar. Sidebar toolbar has ~70pt leading padding to avoid overlap. |
-| **Drag Region** | Sidebar toolbar area and tab bar area act as window drag regions. |
-| **Two-Panel Split** | NSSplitViewController: Sidebar \| Main Area. The main area is a SwiftUI view containing the tab bar + content card. Sidebar is collapsible. |
-| **Window Background** | Entire window uses sidebar material. The content card floats within this background. |
-| **Frame Persistence** | Window position and size saved between launches via `setFrameAutosaveName`. |
-| **Keyboard Shortcuts** | Cmd+Enter to send request. Cmd+N new request. Cmd+T new tab. Cmd+W close tab. Cmd+Shift+N new folder. Cmd+E toggle environments. Cmd+, preferences. |
+- **Window tabs, entirely free** — including drag-out, merge, overview, and the Window menu (§7.2).
+- **Undo/redo for free** — wire `viewContext.undoManager` to the window's undo manager. Cmd+Z undoes a deleted request, a renamed folder, an edited header.
+- **Accessibility mostly for free** — stock controls ship with correct VoiceOver roles and full keyboard access. The three custom views in §7.4 need explicit `NSAccessibility` work; nothing else should.
+- **Appearance for free** — source list, tab bar, toolbar, and segmented controls all handle Dark Mode, Increase Contrast, and accent color changes without app code.
+- **Services menu, Sharing, Quick Look** on response bodies.
+- **Real drag & drop** — drag a request to Finder to export it, drop a `.json` collection on the sidebar to import it.
+- **State restoration** — reopen with the exact windows, tabs, splits, and selection.
+- **Toolbar customization** — users rearrange their own toolbar; free from `NSToolbar`.
 
 ---
 
-## 4. Implementation Plan
+## 8. Feature Requirements
 
-### Phase 1: Foundation (Shell & Data Layer)
+### 8.1 Sidebar
+Workspace popup at the head · source-list outline tree with system disclosure and colored method badges · workspace-root requests as well as foldered ones · create/rename/duplicate/delete for workspace, folder, request · inline rename via the standard cell text field · context menus · multi-select delete · drag-and-drop reorder and reparent with system drop indicators · live filter driven by `NSSearchToolbarItem` · shared expansion/workspace state across all tabs (§7.2).
 
-**Goal:** App launches with the two-panel layout, content card chrome, and SwiftData models in place.
+### 8.2 Tabs & windows
+One request per window tab · titles and subtitles from `window.title` / `window.subtitle` · sidebar selection navigates the current tab; Cmd+click or Cmd+T opens a new one · Cmd+W closes the tab · dirty state reflected in the title · everything else — reorder, drag-out, merge, overview, Cmd+Shift+[ / ] — inherited from the system.
 
-1. **Window setup** — Replace the template `ContentView` with `MainWindowController` + `MainSplitViewController` (AppKit). No titlebar (`titlebarAppearsTransparent`, `fullSizeContentView`, hidden title, no separator). Traffic lights overlay the sidebar top-left; sidebar toolbar reserves leading space for them. Tab bar and sidebar toolbar areas registered as window drag regions. Two split items: Sidebar | Main Area. Entire window uses sidebar material background.
-2. **Content card shell** — The main area is a SwiftUI view with sidebar material background. Inside it, render a rounded rectangle "content card" with padding (trailing ~12pt, bottom ~12pt, leading gap ~12pt from sidebar edge). The card uses a distinct lighter surface background.
-3. **Tab bar shell** — Above the content card, in the window background, render an empty tab bar area. Placeholder active tab that connects visually to the card (shared background, no border between active tab bottom and card top).
-4. **SwiftData models** — Create all `@Model` classes: `Workspace`, `Folder`, `Request`, `Header`, `QueryParam`, `Environment`, `EnvironmentVariable`. Configure `ModelContainer` with the full schema.
-5. **ViewModels** — Create `@Observable` classes: `SidebarViewModel`, `RequestEditorViewModel`, `InspectorViewModel`. Wire up `ModelContext` access.
-6. **Styling foundation** — Port/adapt `ForgeStyles` from Admiral: `HoverButtonStyle`, `HoverTextButtonStyle`, color constants, `VisualEffectBackground`. Define content card surface color.
-7. **Empty state views** — Sidebar shows "No workspaces" with create button. Content card shows "Select a request". Right side of content card (inspector area) shows "Send a request to see the response".
+### 8.3 Request editor
+**URL bar:** method popup, URL field with `{{var}}` highlighting and resolution tooltips, Send / Cancel button. Spans the full content width above the split, so it reads as belonging to both panes. Editing the URL syncs the Params table bidirectionally.
+**Params / Headers:** key-value tables, per-row enable, note column, common-header autocomplete, bulk-edit text mode.
+**Body:** none · raw (JSON/XML/HTML/Text/JS) · form-data (with file rows) · x-www-form-urlencoded · binary (file picker + security-scoped bookmark) · GraphQL (query + variables panes). Syntax highlighting, format/prettify action, size indicator.
+**Auth:** inherit · none · bearer · basic · API key (header or query). Secret fields route to the Keychain. All values support `{{var}}` interpolation.
+**Variables:** resolved-value table showing scope precedence and unresolved warnings.
 
-**Deliverable:** App launches, shows sidebar + floating content card with tab bar, can create/persist a workspace.
+### 8.4 Response pane (right side of the content split)
+Status badge (colored by class) · duration · size · Body / Headers / Cookies / Timeline tabs · body auto-formatted by Content-Type with a pretty/raw/preview segmented control and a collapsible JSON tree · image preview · search-in-body · copy/save response · cookie table parsed from `Set-Cookie` · timeline from `URLSessionTaskMetrics` (DNS/TCP/TLS/TTFB/download) · run history list with starring and diff-against-previous · empty and error states · collapsible to give the editor full width.
 
----
+### 8.5 HTTP engine
+`URLSession` with per-request timeout and redirect policy · full variable interpolation before send · cancellation · cookie jar via `HTTPCookieStorage` · gzip/deflate · streaming download for large bodies with a size cap before rendering · TLS trust decisions surfaced (never silently bypassed) · every run persisted with a redacted request snapshot.
 
-### Phase 2: Sidebar
+### 8.6 Variables & environments
+Scopes, in resolution order: **request → environment → collection → global**. Environment CRUD in a sheet; per-workspace active environment selected from the toolbar popup; secret masking; unresolved-variable warnings inline in the URL bar and in the Variables tab.
 
-**Goal:** Full workspace/folder/request navigation.
+### 8.7 Import / export
+Postman Collection v2.1 import (folders, requests, auth, bodies, variables) · Postman environment import · curl-command paste-to-request · OpenAPI 3.x import · Postman v2.1 export · import preview with conflict resolution (skip / overwrite / duplicate) · library backup and restore (§5.4) · secrets never written to exports or backups.
 
-1. **Workspace switcher** — Horizontal `ScrollView` with `.scrollTargetBehavior(.paging)` at the top of the sidebar. Each page fills sidebar width. Workspace name, request count, add/settings buttons.
-2. **Collection tree** — Custom `ForEach` rendering `Folder` and `Request` rows. Expand/collapse folders. Method badge (colored pill) on request rows. Indent levels for nested folders.
-3. **CRUD operations** — Create/rename/delete for workspaces, folders, and requests via context menus and toolbar buttons.
-4. **Selection state** — Track selected request ID. Propagate to content area via callback (matching Admiral's pattern). Opening a request creates a tab in the tab bar.
-5. **Drag & drop** — Reorder folders and requests. Move requests between folders. Visual drop indicators.
-
-**Deliverable:** Can create workspaces, organize requests into folders, select a request to open as a tab.
-
----
-
-### Phase 3: Tab Bar & Content Card Layout
-
-**Goal:** Chrome-style tab bar managing open requests, with request editor and inspector inside the content card.
-
-1. **Tab model** — Track open tabs (request IDs), active tab, tab order. ViewModel manages tab state.
-2. **Tab bar rendering** — Chrome-style tabs above the content card. Active tab: rounded top corners, bottom edge merges into content card (same background, no border). Inactive tabs: muted appearance in window background. Close button on hover. `+` button for new tab.
-3. **Tab interactions** — Click to switch. Drag to reorder. Middle-click or close button to close. Cmd+T new tab, Cmd+W close tab.
-4. **Content card internal split** — Horizontal split inside the content card: Request Editor (left) | Inspector (right). Draggable divider. Inspector collapsible.
-5. **Tab ↔ content binding** — Switching tabs swaps the request editor and inspector content. Each tab remembers its scroll position and editor state.
-
-**Deliverable:** Can open multiple requests as tabs, switch between them, and see the split editor/inspector layout inside the content card.
+### 8.8 Shortcuts
+Cmd+Enter send · Cmd+. cancel · Cmd+N request · Cmd+Shift+N folder · Cmd+T new tab · Cmd+W close tab · Cmd+Shift+[ / ] switch tabs (system) · Cmd+E environments · Cmd+F filter sidebar · Cmd+Opt+F find in response · Cmd+Ctrl+S toggle sidebar · Cmd+Opt+I toggle response pane · Cmd+, settings · Cmd+Z / Shift+Cmd+Z undo/redo.
 
 ---
 
-### Phase 4: Request Editor
+## 9. Implementation Plan
 
-**Goal:** Can compose and edit HTTP requests.
+Each phase ends with a runnable, demoable app. No phase leaves the build broken.
 
-1. **URL bar** — At the top of the request editor (inside content card). Method dropdown + URL text field + Send button. Parse URL on change to extract/sync query params.
-2. **Section tab bar** — Below URL bar: Params, Headers, Body, Auth. ForgeTabBar-style with matchedGeometryEffect.
-3. **Key-value editor component** — Reusable component for Params and Headers tabs. Enable/disable toggle, key/value fields, add/remove buttons.
-4. **Body editor** — Body type selector. JSON text editor (basic `TextEditor` initially, syntax highlighting later). Form data key-value editor.
-5. **Auth editor** — Auth type picker. Dynamic forms for Bearer, Basic, API Key.
+### Phase 0 — Clear the slate
+Delete `Courier/`, `CourierTests/`, `CourierUITests/` sources. Rebuild the Xcode target from empty: `main.swift` + `AppDelegate`, no Storyboard, no SwiftUI. Configure Swift 6 strict concurrency, App Sandbox, network-client and file-access entitlements. Add the `import SwiftUI` build-phase guard (§10.3). Create the versioned `.xcdatamodeld`.
+**Deliverable:** empty window launches and is sandboxed correctly.
 
-**Deliverable:** Can fully compose a request with URL, params, headers, body, and auth.
+### Phase 1 — Persistence foundation
+Full Core Data model per §4. `CoreDataStack` with lightweight migration, corrupt-store quarantine (§5.3), and history retention (§4.3). `SecretStore` (Keychain + in-memory test double). Repository layer with value-type snapshots. Reorder/reparent helpers. Unit tests against an in-memory store covering CRUD, ordering, cascade deletes, retention pruning, and Keychain round-trips.
+**Deliverable:** no UI, but `swift test` proves the whole data layer.
 
----
+### Phase 2 — App shell & window tabs
+`MainWindowController` with system titlebar, unified toolbar, and `tabbingMode = .preferred` · `NSToolbar` delegate (sidebar toggle, tracking separator, search, environment popup, new-request, settings) · outer `NSSplitViewController` with a sidebar item · content container stacking URL bar and inner split · inner `NSSplitViewController` with autosaved positions · `NSTabViewController` shells for both section bars · `LibraryController` as the shared cross-window state owner · window controller registry, tab open/close/navigate plumbing · full `NSMenu` tree with validated actions · title/subtitle binding · empty states · state restoration scaffolding.
+**Deliverable:** the app's chrome is complete and correct, tabs work end to end, and regions are empty placeholders.
 
-### Phase 5: HTTP Execution & Response (Inspector)
+### Phase 3 — Sidebar
+Workspace popup · source-list `NSOutlineView` backed by repositories + FRC · method badges · CRUD, inline rename, duplicate, delete · context menus · drag & drop reorder/reparent · search filter · shared expansion state verified across tabs · undo/redo wired.
+**Deliverable:** full navigation and organization; selection navigates the current tab, Cmd+click opens a new one.
 
-**Goal:** Can send requests and view responses in the inspector panel.
+### Phase 4 — Request editor
+URL bar with variable highlighting · method picker · request-section tab view controller · key-value `NSTableView` component (reused by Params, Headers, form-data, URL-encoded, variables) · URL ↔ params sync · body editors with TextKit 2 highlighting, line numbers, prettify · auth forms with Keychain-backed secret fields · dirty tracking and autosave.
+**Deliverable:** any request can be fully composed and persisted.
 
-1. **HTTP service** — `RequestExecutor` class wrapping URLSession. Variable interpolation before sending. Measure timing. Return `ResponseResult`.
-2. **Send flow** — Send button triggers execution. Loading state with cancel support. Error handling (timeout, DNS, connection refused, etc.).
-3. **Inspector response view** — Inside the content card's right panel. Status badge (color-coded), timing, size. Body tab with JSON pretty-printing and raw toggle. Headers tab. Shares the content card background.
-4. **Variable interpolation** — Resolve `{{var}}` from active environment. Show unresolved variables as warnings.
+### Phase 5 — HTTP engine & response pane
+`RequestExecutor` with cancellation, metrics, redirects, cookies · `VariableResolver` with the four-scope precedence chain · run persistence · response header bar (status/duration/size) · body rendering (pretty/raw/JSON tree/image/hex) · headers, cookies, timeline tabs · find-in-response · run history list with starring · error states · pane collapse.
+**Deliverable:** end-to-end — compose, send, cancel, inspect, and revisit history.
 
-**Deliverable:** End-to-end: compose request, send, view response in the inspector.
+### Phase 6 — Environments & variables
+Environment editor sheet · variable tables with secret toggles · secret masking and reveal · Keychain integration and orphan sweep · toolbar environment popup · Variables tab showing resolved values and precedence · unresolved-variable warnings.
+**Deliverable:** environments fully drive request resolution.
 
----
+### Phase 7 — Import/export, accessibility & polish
+Postman v2.1 importer/exporter · Postman environment import · curl paste · OpenAPI 3.x · import preview and conflict resolution · drag-and-drop file import · library backup/restore · settings window · `NSAccessibility` work on the three custom views (§7.4) · Dark/Light and Increase Contrast verification · Reduce Motion · performance profiling (10k-request collection, 50MB response, 20 open tabs) · Services/Sharing/Quick Look integration.
+**Deliverable:** shippable v1.
 
-### Phase 6: Environments
-
-**Goal:** Full environment variable support.
-
-1. **Environment model CRUD** — Create/edit/delete environments per workspace. Variable key-value editor with secret toggle.
-2. **Environment selector** — Dropdown in toolbar or sidebar header. Shows active environment name.
-3. **Variable resolution** — Pre-send interpolation. Variables tab in request editor shows resolved values. Unresolved variable warnings.
-
-**Deliverable:** Can switch environments and have variables resolve in URLs, headers, and body.
-
----
-
-### Phase 7: Import
-
-**Goal:** Import existing collections.
-
-1. **Postman JSON importer** — Parse Postman Collection v2.1 format. Map to Workspace > Folders > Requests. Import environments.
-2. **Bruno importer** — Parse `.bru` file format and directory structure. Map to data model.
-3. **Import UI** — File picker. Preview what will be imported. Conflict resolution (skip/overwrite).
-
-**Deliverable:** Can import Postman and Bruno collections into Courier.
+*Two phases lighter than the previous draft: CloudKit hardening is gone, and the custom tab bar phase is absorbed by the system.*
 
 ---
 
-### Phase 8: Polish & Advanced Features
+## 10. Project Structure & Conventions
 
-1. **Syntax highlighting** — Code editor for JSON/XML/GraphQL bodies with proper highlighting.
-2. **Request history** — Store responses per request. Quick comparison view.
-3. **Search/filter** — Filter sidebar tree by request name.
-4. **Keyboard shortcuts** — Full shortcut support (Cmd+Enter send, Cmd+N new request, etc.).
-5. **Cookies tab** — Parse Set-Cookie headers.
-6. **Timeline tab** — URLSessionTaskMetrics breakdown.
-7. **OpenAPI import** — Parse OpenAPI 3.x specs.
-8. **Export** — Export workspace to Postman/Bruno format.
-
----
-
-## 5. File Structure (Target)
+### 10.1 Target layout
 
 ```
 Courier/
 ├── App/
-│   ├── CourierApp.swift
-│   └── AppDelegate.swift
+│   ├── main.swift
+│   ├── AppDelegate.swift
+│   ├── MainMenu.swift
+│   └── WindowRegistry.swift        // tab group + window lifecycle
 ├── Windows/
 │   ├── MainWindowController.swift
-│   └── MainSplitViewController.swift
-├── Models/
-│   ├── Workspace.swift
-│   ├── Folder.swift
-│   ├── Request.swift
-│   ├── Header.swift
-│   ├── QueryParam.swift
-│   ├── Environment.swift
-│   ├── EnvironmentVariable.swift
-│   └── ResponseResult.swift
-├── ViewModels/
-│   ├── SidebarViewModel.swift
-│   ├── TabBarViewModel.swift
-│   ├── RequestEditorViewModel.swift
-│   └── InspectorViewModel.swift
+│   ├── MainToolbarDelegate.swift
+│   ├── RootSplitViewController.swift
+│   ├── ContentViewController.swift            // URL bar + inner split
+│   └── EditorResponseSplitViewController.swift
+├── Persistence/
+│   ├── Courier.xcdatamodeld
+│   ├── CoreDataStack.swift
+│   ├── HistoryRetention.swift
+│   ├── Model/            // CD* NSManagedObject subclasses
+│   └── Repositories/     // WorkspaceRepository, RequestRepository, RunRepository, …
+├── Controllers/
+│   ├── LibraryController.swift     // app-wide shared tree/workspace/filter state
+│   ├── SidebarController.swift
+│   ├── EditorController.swift
+│   └── ResponseController.swift
 ├── Views/
-│   ├── Sidebar/
-│   │   ├── SidebarView.swift
-│   │   ├── WorkspaceSwitcherView.swift
-│   │   ├── CollectionTreeView.swift
-│   │   ├── FolderRow.swift
-│   │   └── RequestRow.swift
-│   ├── MainArea/
-│   │   ├── MainAreaView.swift          // Window bg + tab bar + content card
-│   │   ├── TabBarView.swift            // Chrome-style tabs
-│   │   ├── TabItemView.swift           // Individual tab shape/rendering
-│   │   └── ContentCardView.swift       // Rounded inset container
-│   ├── Content/
-│   │   ├── RequestEditorView.swift
-│   │   ├── URLBarView.swift
-│   │   ├── KeyValueEditor.swift
-│   │   ├── BodyEditorView.swift
-│   │   └── AuthEditorView.swift
-│   ├── Inspector/
-│   │   ├── ResponseInspectorView.swift
-│   │   ├── ResponseBodyView.swift
-│   │   └── ResponseHeadersView.swift
-│   └── Shared/
-│       ├── CourierStyles.swift
-│       ├── CourierTabBar.swift          // Section-level tab bar (Params/Headers/Body/etc)
-│       └── MethodBadge.swift
+│   ├── Sidebar/          // WorkspacePopUpController, CollectionOutlineViewController, cells
+│   ├── Editor/           // URLBarViewController, RequestSectionsTabViewController,
+│   │                     // KeyValueTableViewController, BodyEditorViewController,
+│   │                     // AuthEditorViewController
+│   ├── Response/         // ResponseSectionsTabViewController, body renderers,
+│   │                     // TimelineChartView, HexDumpView, RunHistoryViewController
+│   ├── Environments/     // EnvironmentWindowController
+│   ├── Settings/         // SettingsTabViewController
+│   └── Shared/           // CodeTextView, EmptyStateView, MethodStyle
 ├── Services/
 │   ├── RequestExecutor.swift
 │   ├── VariableResolver.swift
-│   ├── PostmanImporter.swift
-│   └── BrunoImporter.swift
-├── Extensions/
-│   └── ...
-├── Shared/
-│   └── AppSettings.swift
+│   ├── SecretStore.swift
+│   ├── SyntaxHighlighter.swift
+│   ├── Backup.swift
+│   ├── Import/           // PostmanImporter, OpenAPIImporter, CurlParser
+│   └── Export/           // PostmanExporter
+├── Support/
+│   ├── Theme.swift       // method colors + metrics only
+│   ├── Notifications.swift
+│   └── Extensions/
 └── Resources/
-    └── Assets.xcassets/
+```
+
+### 10.2 Conventions
+- Programmatic Auto Layout only; no XIBs, no Storyboards, no frame math outside the three custom views.
+- One view controller per region; view controllers under ~400 lines — split when they exceed it.
+- **Semantic system colors everywhere** — `.labelColor`, `.secondaryLabelColor`, `.separatorColor`, `.controlAccentColor`, `.selectedContentBackgroundColor`. `Theme` carries only method colors and layout metrics; it is deliberately thin, because stock controls already handle appearance.
+- Repositories return value types; managed objects never leave `Persistence/`.
+- New custom `NSView` subclasses require a justification added to §7.4.
+
+### 10.3 The AppKit guard
+A "Run Script" build phase fails the build on any SwiftUI import in the app target:
+
+```bash
+if grep -rn --include=\*.swift -E '^\s*import\s+SwiftUI' "$SRCROOT/Courier"; then
+  echo "error: SwiftUI import found — Courier is AppKit-only"; exit 1
+fi
 ```
 
 ---
 
-## 6. Key Design Principles
+## 11. Risks
 
-1. **Follow Admiral patterns** — NSSplitViewController for layout, @Observable ViewModels, NotificationCenter for cross-component communication, ForgeStyles-inspired theming.
-2. **Floating content card** — The content area is an inset rounded rectangle over a unified sidebar-material window background. The inspector lives inside the card, not as a separate window panel. This creates visual depth and a clear separation between navigation (sidebar) and workspace (card).
-3. **Chrome-style tab bar** — Tabs live in the window background above the content card. The active tab merges into the card surface. This is the primary navigation between open requests.
-4. **No List** — Sidebar uses custom `ForEach` with manual styling for full control over appearance and interaction.
-5. **SwiftData is the source of truth** — Import files are ingested into SwiftData, not read live. All mutations go through ModelContext.
-6. **Offline-first** — Everything works locally. No accounts, no cloud sync, no telemetry.
-7. **Keyboard-driven** — Every action reachable via keyboard shortcut.
-8. **Progressive disclosure** — Simple requests should be trivial. Advanced features (scripts, auth, variables) available but not in the way.
+| Risk | Mitigation |
+|---|---|
+| **Window-tab state sharing.** One window per tab means N sidebars, N outline views, N fetched-results controllers. Expansion or workspace state diverging between tabs reads as a bug. | `LibraryController` is the single owner of shared tree state; windows observe it and hold only selection. Built in Phase 2 and verified before the sidebar lands in Phase 3. |
+| Memory with many open tabs. | Repositories hand out value snapshots, and `LibraryController` caches one tree snapshot shared by all windows. Profile at 20 tabs in Phase 7. |
+| `NSOutlineView` + Core Data + drag-reorder + FRC is still the most bug-prone combination in the app. | Repository returns an immutable tree snapshot; the outline view diffs against it. Cover reorder/reparent with unit tests before wiring the UI. |
+| Store corruption or a failed migration destroys the library, and there's no cloud copy to fall back on. | Quarantine rather than delete (§5.3); back up before every migration attempt; ship backup/restore in Phase 7. **This risk is materially higher without sync.** |
+| Large responses (50MB+) rendered in `NSTextView`. | Size cap before rendering with an explicit "show anyway" affordance; bodies stored as external binary data. |
+| Run history grows unbounded. | Retention policy at launch (§4.3), configurable in settings. |
+| Sandbox + user-supplied URLs + client certificates. | `network.client` covers ordinary requests. Client certs and custom CAs are post-v1; don't design around them now. |
 
 ---
 
-## 7. Implementation Checklist
+## 12. Settled & Open
 
-### Phase 1: Foundation
-- [x] Window setup (MainWindowController, no titlebar, fullSizeContentView, traffic light spacing)
-- [x] MainSplitViewController (two-panel: Sidebar | Main Area)
-- [ ] Window drag regions (sidebar toolbar, tab bar area)
-- [x] Sidebar material background across entire window
-- [x] Content card shell (rounded rect, padding, lighter surface background)
-- [x] Tab bar shell (placeholder area above content card)
-- [x] SwiftData schema (Workspace, Folder, Request, Header, QueryParam, Environment, EnvironmentVariable)
-- [x] ModelContainer configuration
-- [x] SidebarViewModel
-- [x] RequestEditorViewModel
-- [x] InspectorViewModel
-- [x] CourierStyles (HoverButtonStyle, HoverTextButtonStyle, VisualEffectBackground, surface colors)
-- [x] Empty state: Sidebar ("No workspaces" + create button)
-- [x] Empty state: Content card ("Select a request")
-- [x] Empty state: Inspector ("Send a request to see the response")
+**Settled:**
+- **Bundle identifier:** `com.perezstudio.Courier`. Keychain service: `com.perezstudio.Courier.secrets`. App group / support directory: `~/Library/Application Support/Courier/`.
 
-### Phase 2: Sidebar
-- [x] Workspace switcher (horizontal paging ScrollView, snap behavior)
-- [x] Workspace page (name, request count, add/settings buttons)
-- [x] Collection tree (custom ForEach, no List)
-- [x] Folder rows (expand/collapse, chevron, indent levels)
-- [x] Request rows (method badge + name)
-- [x] Create workspace
-- [x] Create folder
-- [x] Create request
-- [ ] Rename workspace/folder/request
-- [x] Delete workspace/folder/request
-- [x] Context menus (right-click actions)
-- [x] Selection state (track selected request, propagate to content)
-- [ ] Drag & drop reorder (folders)
-- [ ] Drag & drop reorder (requests)
-- [ ] Drag & drop move requests between folders
-
-### Phase 3: Tab Bar & Content Card
-- [x] Tab model (open tabs, active tab, tab order in ViewModel)
-- [x] Chrome-style tab rendering (active tab merges into content card)
-- [x] Inactive tab styling (muted, in window background)
-- [x] Tab close button (on hover)
-- [x] New tab button (+)
-- [x] Tab click to switch
-- [ ] Tab drag to reorder
-- [ ] Tab keyboard shortcuts (Cmd+T, Cmd+W)
-- [x] Tab overflow (horizontal scroll with fade edges)
-- [x] Content card internal split (Request Editor | Inspector)
-- [x] Draggable divider between editor and inspector
-- [x] Inspector collapse/expand toggle
-- [x] Tab ↔ content binding (switch tabs swaps content)
-- [ ] Per-tab state preservation (scroll position, editor state)
-
-### Phase 4: Request Editor
-- [x] URL bar (method dropdown + URL field + Send button)
-- [x] URL parsing (auto-extract query params, sync with Params tab)
-- [x] Section tab bar (Params, Headers, Body, Auth, Variables, Scripts)
-- [x] Key-value editor component (reusable, enable/disable toggles, add/remove)
-- [x] Params tab (key-value editor, synced with URL)
-- [x] Headers tab (key-value editor, common headers autocomplete)
-- [x] Body type selector (None, JSON, XML, Form Data, URL Encoded, Binary, GraphQL)
-- [x] Body editor: JSON/XML text editor
-- [x] Body editor: Form Data key-value editor
-- [x] Body editor: URL Encoded key-value editor
-- [x] Body editor: Binary file picker
-- [ ] Body editor: GraphQL query + variables
-- [x] Auth type selector (None, Bearer, Basic, API Key)
-- [x] Auth editor: Bearer Token form
-- [x] Auth editor: Basic Auth form
-- [x] Auth editor: API Key form
-- [ ] Auth variable interpolation support ({{variable}})
-
-### Phase 5: HTTP Execution & Response
-- [x] RequestExecutor service (URLSession wrapper)
-- [x] Request timing measurement
-- [x] ResponseResult model
-- [x] Send button → execute flow
-- [x] Loading state (spinner/progress)
-- [ ] Cancel in-flight request (Send → Cancel button)
-- [x] Error handling (timeout, DNS, connection refused, SSL errors)
-- [x] Inspector: status badge (color-coded 2xx/3xx/4xx/5xx)
-- [x] Inspector: duration display
-- [x] Inspector: response size display
-- [x] Inspector: Body tab (JSON pretty-print + raw toggle)
-- [ ] Inspector: Body tab (HTML/XML syntax highlighted)
-- [ ] Inspector: Body tab (image inline preview)
-- [x] Inspector: Headers tab (response headers list)
-- [ ] Variable interpolation before send (resolve {{var}} from active environment)
-- [ ] Unresolved variable warnings
-
-### Phase 6: Environments
-- [ ] Environment CRUD (create, edit, delete per workspace)
-- [ ] Environment variable editor (key-value + secret toggle)
-- [ ] Secret variable masking in UI
-- [ ] Environment selector (dropdown, shows active environment)
-- [ ] Variables tab in request editor (shows resolved values)
-- [ ] Pre-send interpolation pipeline
-
-### Phase 7: Import
-- [ ] Postman JSON importer (v2.1 collection format)
-- [ ] Postman environment import
-- [ ] Bruno .bru file parser
-- [ ] Bruno directory structure mapping
-- [ ] Import UI (file picker)
-- [ ] Import preview (show what will be imported)
-- [ ] Import conflict resolution (skip/overwrite)
-
-### Phase 8: Polish & Advanced Features
-- [ ] Syntax highlighting (JSON/XML/GraphQL code editor)
-- [ ] Request history (store last N responses per request)
-- [ ] Sidebar search/filter (filter by request name)
-- [ ] Keyboard shortcuts (Cmd+Enter, Cmd+N, Cmd+Shift+N, Cmd+E, Cmd+,)
-- [ ] Cookies tab (parse Set-Cookie headers)
-- [ ] Timeline tab (URLSessionTaskMetrics breakdown)
-- [ ] OpenAPI 3.x import
-- [ ] Export to Postman JSON
-- [ ] Export to Bruno YAML
+**Open — none of these block Phase 0:**
+1. **Distribution** — Developer ID direct download, or Mac App Store? Affects sandbox strictness and the update mechanism.
+2. **Bruno import** — an earlier plan included it. Still wanted, or are Postman + OpenAPI + curl enough for v1?
+3. **File-backed collections** — the long-term portability answer if you ever want collections in git or shared across machines. Worth designing the export format with that future in mind, or not a concern?
+4. **App icon** — the existing `AppIcon.icon` asset is the one thing worth salvaging from the current tree if you want it.
