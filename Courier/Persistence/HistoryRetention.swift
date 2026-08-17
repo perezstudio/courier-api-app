@@ -10,9 +10,12 @@ import OSLog
 /// saying "keep this one". See REQUIREMENTS.md §4.3.
 enum HistoryRetention {
 
-    static let defaultLimit = 50
+    nonisolated static let defaultLimit = 50
 
-    private static let logger = Logger(subsystem: "com.perezstudio.Courier", category: "retention")
+    nonisolated private static let logger = Logger(
+        subsystem: "com.perezstudio.Courier",
+        category: "retention"
+    )
 
     /// Prunes every request's history. Returns how many runs were deleted.
     ///
@@ -20,8 +23,11 @@ enum HistoryRetention {
     /// cascade rules fire and the external binary files backing response bodies
     /// are reclaimed. A batch delete bypasses the object graph and would leak
     /// those files.
+    ///
+    /// `nonisolated` because this runs on a background context at launch, not
+    /// on the main actor.
     @discardableResult
-    static func prune(in context: NSManagedObjectContext, limit: Int = defaultLimit) throws -> Int {
+    nonisolated static func prune(in context: NSManagedObjectContext, limit: Int = defaultLimit) throws -> Int {
         let requestFetch = CDRequest.fetchRequest()
         let requests = try context.fetch(requestFetch)
 
@@ -41,7 +47,7 @@ enum HistoryRetention {
 
     /// Prunes a single request's history.
     @discardableResult
-    static func prune(
+    nonisolated static func prune(
         request: CDRequest,
         in context: NSManagedObjectContext,
         limit: Int = defaultLimit
