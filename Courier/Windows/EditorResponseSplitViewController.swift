@@ -7,12 +7,13 @@ import AppKit
 final class EditorResponseSplitViewController: NSSplitViewController {
 
     private let editorViewController: NSViewController
-    private let responseViewController = ResponseSectionsTabViewController()
+    let responseViewController: ResponseSectionsTabViewController
 
     private var responseItem: NSSplitViewItem!
 
-    init(editor: NSViewController) {
+    init(editor: NSViewController, response: ResponseSectionsTabViewController) {
         self.editorViewController = editor
+        self.responseViewController = response
         super.init(nibName: nil, bundle: nil)
     }
 

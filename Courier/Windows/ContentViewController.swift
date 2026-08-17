@@ -8,10 +8,13 @@ final class ContentViewController: NSViewController {
 
     private let libraryController: LibraryController
     private let editorController: EditorController
+    private let responseController: ResponseController
 
     private let urlBar = URLBarViewController()
     private let editorResponseSplit: EditorResponseSplitViewController
     private let sections: RequestSectionsTabViewController
+    private let responseSections: ResponseSectionsTabViewController
+    private let history = RunHistoryViewController()
     private let emptyState: EmptyStateView
 
     private var requestID: UUID?
@@ -23,8 +26,15 @@ final class ContentViewController: NSViewController {
             secretStore: secretStore
         )
         self.editorController = editorController
+        self.responseController = ResponseController(libraryController: libraryController)
         self.sections = RequestSectionsTabViewController(editorController: editorController)
-        self.editorResponseSplit = EditorResponseSplitViewController(editor: sections)
+        self.responseSections = ResponseSectionsTabViewController(
+            historyViewController: history
+        )
+        self.editorResponseSplit = EditorResponseSplitViewController(
+            editor: sections,
+            response: responseSections
+        )
         self.emptyState = EmptyStateView(
             symbolName: "square.on.square.dashed",
             title: "No Request Open",
@@ -112,11 +122,65 @@ final class ContentViewController: NSViewController {
         editorController.onChange = { [weak self] in
             self?.sections.refreshDerived()
         }
+
+        responseController.onStateChange = { [weak self] state in
+            self?.applyResponseState(state)
+        }
+        responseController.onHistoryChange = { [weak self] in
+            self?.reloadHistory()
+        }
+
+        history.onSelect = { [weak self] runID in
+            self?.showStoredRun(runID)
+        }
+        history.onToggleStar = { [weak self] runID, isStarred in
+            self?.responseController.setStarred(isStarred, runID: runID)
+        }
+    }
+
+    private func applyResponseState(_ state: ResponseController.State) {
+        switch state {
+        case .idle:
+            responseSections.showIdle()
+        case .sending:
+            responseSections.showSending()
+        case .finished(let result):
+            responseSections.showResult(result)
+        case .failed(let message):
+            responseSections.showError(message)
+        }
+
+        // The Send button becomes Cancel while a request is in flight, which is
+        // the only affordance for stopping one (§8.3).
+        urlBar.setSending(responseController.isSending)
+    }
+
+    private func reloadHistory() {
+        guard let requestID else {
+            history.setRuns([])
+            return
+        }
+        history.setRuns(responseController.runs(forRequest: requestID))
+    }
+
+    private func showStoredRun(_ runID: UUID) {
+        guard let stored = responseController.storedRun(id: runID) else { return }
+        responseSections.showStoredRun(
+            summary: stored.summary,
+            body: stored.body,
+            headersJSON: stored.headers,
+            timingJSON: stored.timing
+        )
     }
 
     // MARK: - Content
 
     func showRequest(_ requestID: UUID?) {
+        // Switching requests must not leave the previous one's response on
+        // screen, or cancel silently.
+        responseController.cancel()
+        responseSections.showIdle()
+
         self.requestID = requestID
         editorController.load(requestID: requestID)
 
@@ -124,6 +188,7 @@ final class ContentViewController: NSViewController {
             urlBar.configure(method: editorController.method, url: editorController.url)
             sections.reload()
         }
+        reloadHistory()
         updateVisibility()
     }
 
@@ -145,7 +210,34 @@ final class ContentViewController: NSViewController {
     }
 
     private func sendRequest() {
-        // Phase 5 wires this to RequestExecutor.
-        NSSound.beep()
+        guard let requestID else { return }
+
+        if responseController.isSending {
+            responseController.cancel()
+            return
+        }
+
+        // Flush first: an in-flight autosave debounce would otherwise mean the
+        // request that goes out differs from the one that gets stored.
+        editorController.flushPendingSave()
+
+        let input = RequestBuilder.Input(
+            method: editorController.method,
+            urlTemplate: editorController.url,
+            headers: editorController.headers,
+            queryParams: editorController.queryParams,
+            bodyType: editorController.bodyType,
+            bodyContent: editorController.bodyContent,
+            auth: editorController.auth,
+            authSecret: editorController.currentAuthSecret(),
+            timeout: editorController.detail?.timeout ?? 30,
+            followRedirects: editorController.detail?.followRedirects ?? true
+        )
+
+        responseController.send(
+            input: input,
+            requestID: requestID,
+            context: responseController.makeVariableContext()
+        )
     }
 }

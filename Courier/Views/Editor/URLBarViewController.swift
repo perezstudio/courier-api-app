@@ -108,6 +108,13 @@ final class URLBarViewController: NSViewController {
         set { sendButton.isEnabled = newValue }
     }
 
+    /// Send becomes Cancel while a request is in flight — the only way to stop
+    /// one (REQUIREMENTS.md §8.3).
+    func setSending(_ isSending: Bool) {
+        sendButton.title = isSending ? "Cancel" : "Send"
+        sendButton.contentTintColor = isSending ? .systemRed : nil
+    }
+
     // MARK: - Actions
 
     @objc private func methodChanged() {
