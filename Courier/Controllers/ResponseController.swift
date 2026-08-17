@@ -131,7 +131,7 @@ final class ResponseController {
             summary,
             try? libraryController.runs.responseBody(forRun: id),
             try? libraryController.runs.responseHeadersJSON(forRun: id),
-            nil
+            try? libraryController.runs.timingJSON(forRun: id)
         )
     }
 

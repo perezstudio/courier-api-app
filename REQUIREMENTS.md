@@ -359,6 +359,50 @@ Cmd+Enter send · Cmd+. cancel · Cmd+N request · Cmd+Shift+N folder · Cmd+T n
 
 Each phase ends with a runnable, demoable app. No phase leaves the build broken.
 
+### Progress
+
+| Phase | Status | Commit |
+|---|---|---|
+| 0 — Clear the slate | **Done** | `3297a81` |
+| 1 — Persistence foundation | **Done** | `eef354e` |
+| 2 — App shell & window tabs | **Done** | `9547409` |
+| 3 — Sidebar | **Done** | `37b9f2a` |
+| 4 — Request editor | **Done** | `aa0e58a` |
+| 5 — HTTP engine & response pane | **Done** | `e057ca2` |
+| 6 — Environments & variables | **Done** | `d101ca7` |
+| 7 — Import/export, accessibility & polish | Not started | — |
+
+**130 tests passing.** The app composes, sends, cancels, and inspects real
+requests, with environments driving variable resolution.
+
+### Carried forward — built but incomplete
+
+Things a phase delivered in part, deliberately, and where the rest belongs:
+
+| Item | State | Lands in |
+|---|---|---|
+| **Undo/redo** | Unwired; Cmd+Z is inert. Reasoning in §7.5, tracked as open question 1. | Its own pass |
+| **Binary request bodies** | Body type selectable; no file picker, so nothing is sent. | Phase 7 |
+| **`multipart/form-data`** | Encoded as a query string, so file parts are unsupported. Fine for plain fields. | Phase 7 |
+| **GraphQL** | Body type exists and posts the query; no separate variables pane (§8.3). | Phase 7 |
+| **Auth `inherit`** | Sends nothing. Folder- and collection-level auth is not modeled. | Post-v1 |
+| **Response diff** | History lists and replays runs; no diff-against-previous (§8.4). | Phase 7 |
+| **Tab dirty indicator** | Not built. With a 400ms autosave debounce nothing stays dirty, so the indicator in §8.2 would always be off. | Dropped, deliberately |
+| **JSON tree view** | Body renders pretty/raw with highlighting; no collapsible outline (§8.4). | Phase 7 |
+| **Settings window** | Menu item present but disabled. | Phase 7 |
+| **History retention tuning** | Prune walks every request's runs at launch — correct, but O(all runs). | Phase 7 profiling |
+
+### Verification debt
+
+Covered by tests but never confirmed on screen, because AppKit does not expose
+these to accessibility scripting:
+
+- Sidebar drag-and-drop gesture, and the sidebar context menu (Phase 3).
+- The environment editor's windowed presentation, after it was converted from a
+  sheet (Phase 6).
+
+Worth a human passing over these before v1.
+
 ### Phase 0 — Clear the slate
 Delete `Courier/`, `CourierTests/`, `CourierUITests/` sources. Rebuild the Xcode target from empty: `main.swift` + `AppDelegate`, no Storyboard, no SwiftUI. Configure Swift 6 strict concurrency, App Sandbox, network-client and file-access entitlements. Add the `import SwiftUI` build-phase guard (§10.3). Create the versioned `.xcdatamodeld`.
 **Deliverable:** empty window launches and is sandboxed correctly.

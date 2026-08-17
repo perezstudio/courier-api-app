@@ -112,6 +112,12 @@ final class RunRepository {
         try fetchRun(id)?.requestSnapshot?.json
     }
 
+    /// Timing lives on the run itself rather than in a payload entity, since
+    /// it is small enough not to be worth faulting separately.
+    func timingJSON(forRun id: UUID) throws -> String? {
+        try fetchRun(id)?.timingJSON
+    }
+
     func deleteRun(id: UUID) throws {
         guard let run = try fetchRun(id) else { return }
         context.delete(run)
