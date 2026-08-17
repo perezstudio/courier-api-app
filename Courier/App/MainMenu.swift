@@ -91,6 +91,16 @@ enum MainMenu {
         )
 
         menu.addItem(.separator())
+        // The toolbar's Send is a stock bordered item, which has no key
+        // equivalent of its own — this is where Cmd+Return lives now.
+        let send = menu.addItem(
+            withTitle: "Send Request",
+            action: #selector(MainWindowController.sendRequest(_:)),
+            keyEquivalent: "\r"
+        )
+        send.keyEquivalentModifierMask = [.command]
+
+        menu.addItem(.separator())
         menu.addItem(
             withTitle: "Environments…",
             action: #selector(MainWindowController.showEnvironments(_:)),

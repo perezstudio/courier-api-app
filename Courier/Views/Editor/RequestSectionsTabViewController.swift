@@ -15,6 +15,14 @@ final class RequestSectionsTabViewController: NSTabViewController {
     private let authEditor = AuthEditorViewController()
     private let variablesViewController = VariablesViewController()
 
+    /// Shown over the sections when no request is open. The results column has
+    /// its own empty state, so each column explains itself.
+    private let emptyState = EmptyStateView(
+        symbolName: "square.on.square.dashed",
+        title: "No Request Open",
+        subtitle: "Create a request, or open one from the sidebar."
+    )
+
     init(editorController: EditorController) {
         self.editorController = editorController
         super.init(nibName: nil, bundle: nil)
@@ -34,11 +42,32 @@ final class RequestSectionsTabViewController: NSTabViewController {
 
         wireCallbacks()
 
+        setupEmptyState()
+
         addSection(paramsTable, label: "Params")
         addSection(headersTable, label: "Headers")
         addSection(bodyEditor, label: "Body")
         addSection(authEditor, label: "Auth")
         addSection(variablesViewController, label: "Variables")
+    }
+
+    private func setupEmptyState() {
+        emptyState.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(emptyState)
+        NSLayoutConstraint.activate([
+            emptyState.topAnchor.constraint(equalTo: view.topAnchor),
+            emptyState.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            emptyState.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            emptyState.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+    }
+
+    /// Covers the section tabs when nothing is open, so the column does not
+    /// show an editable-looking form with no request behind it.
+    func setHasRequest(_ hasRequest: Bool) {
+        loadViewIfNeeded()
+        emptyState.isHidden = hasRequest
+        tabView.isHidden = !hasRequest
     }
 
     private func addSection(_ controller: NSViewController, label: String) {

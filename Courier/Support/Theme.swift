@@ -9,12 +9,17 @@ import AppKit
 enum Theme {
 
     enum Metrics {
-        static let sidebarMinWidth: CGFloat = 220
-        static let sidebarIdealWidth: CGFloat = 260
-        static let sidebarMaxWidth: CGFloat = 400
+        // Column sizing follows Admiral: both side columns are bounded and
+        // hold their width, and the middle column is the flexible one. The
+        // reverse — a capped middle column — means dragging to widen the
+        // settings hits its ceiling immediately and moves the sidebar instead.
+        static let sidebarMinWidth: CGFloat = 200
+        static let sidebarMaxWidth: CGFloat = 350
 
-        static let editorMinWidth: CGFloat = 380
-        static let responseMinWidth: CGFloat = 320
+        /// Middle column — request settings. Deliberately has no maximum.
+        static let settingsMinWidth: CGFloat = 400
+
+        static let resultsMinWidth: CGFloat = 350
 
         static let urlBarHeight: CGFloat = 44
         static let standardPadding: CGFloat = 12

@@ -1,9 +1,18 @@
 import AppKit
 
-/// Sidebar | content. The sidebar item is created with
-/// `NSSplitViewItem(sidebarWithViewController:)` so the system supplies the
-/// material, full-height behavior under the titlebar, and the collapse
-/// animation — none of that is app code.
+/// The window's three columns: **sidebar | request settings | results**.
+///
+/// One split view with three items rather than a split nested inside a content
+/// pane, which is how Mail arranges mailboxes, message list, and message. The
+/// flat arrangement is what makes the toolbar's tracking separators work:
+/// divider 0 sits between the sidebar and the settings column, divider 1
+/// between settings and results, and both belong to the same split view.
+///
+/// Column sizing follows Admiral: the sidebar and results columns are bounded
+/// and hold their width (`holdingPriority` above default), while the middle
+/// settings column is unbounded and yields (`holdingPriority` at default). That
+/// is what makes dragging either divider widen the settings column, and makes
+/// the window's growth go to the settings rather than the results.
 @MainActor
 final class RootSplitViewController: NSSplitViewController {
 
@@ -11,9 +20,24 @@ final class RootSplitViewController: NSSplitViewController {
     private unowned let registry: WindowRegistry
 
     private let sidebarViewController: SidebarViewController
-    private let contentViewController: ContentViewController
+    let session: RequestSessionController
 
     private var sidebarItem: NSSplitViewItem!
+    private var settingsItem: NSSplitViewItem!
+    private var resultsItem: NSSplitViewItem!
+
+    /// Fires when the results column collapses or expands, so the toolbar's
+    /// inspector button can reflect it.
+    var onResultsCollapseChange: ((Bool) -> Void)?
+
+    /// Forwarded to the sidebar's environment picker.
+    var onEditEnvironments: (() -> Void)? {
+        didSet { sidebarViewController.onEditEnvironments = onEditEnvironments }
+    }
+
+    var isResultsCollapsed: Bool {
+        resultsItem?.isCollapsed ?? false
+    }
 
     init(libraryController: LibraryController, registry: WindowRegistry) {
         self.libraryController = libraryController
@@ -22,7 +46,7 @@ final class RootSplitViewController: NSSplitViewController {
             libraryController: libraryController,
             registry: registry
         )
-        self.contentViewController = ContentViewController(
+        self.session = RequestSessionController(
             libraryController: libraryController,
             secretStore: libraryController.secretStore
         )
@@ -41,17 +65,49 @@ final class RootSplitViewController: NSSplitViewController {
         sidebarItem.minimumThickness = Theme.Metrics.sidebarMinWidth
         sidebarItem.maximumThickness = Theme.Metrics.sidebarMaxWidth
         sidebarItem.canCollapse = true
+        sidebarItem.holdingPriority = .defaultLow + 1
         addSplitViewItem(sidebarItem)
 
-        let contentItem = NSSplitViewItem(viewController: contentViewController)
-        contentItem.minimumThickness = Theme.Metrics.editorMinWidth + Theme.Metrics.responseMinWidth
-        addSplitViewItem(contentItem)
+        // No maximum, and the lowest holding priority of the three: this is the
+        // column that grows.
+        // Wrapped so the section picker clears the toolbar; see
+        // SafeAreaContainerViewController for why this is not done in layout.
+        settingsItem = NSSplitViewItem(
+            viewController: SafeAreaContainerViewController(child: session.sections)
+        )
+        settingsItem.minimumThickness = Theme.Metrics.settingsMinWidth
+        settingsItem.holdingPriority = .defaultLow
+        // Settings and results start equal, expressed as fractions. Setting the
+        // divider by hand after the view appeared did not work: it runs before
+        // the window reaches its final size, so the arithmetic was against the
+        // wrong width. AppKit applies these at the right point in layout.
+        settingsItem.preferredThicknessFraction = 0.4
+        addSplitViewItem(settingsItem)
 
-        splitView.autosaveName = "CourierRootSplit"
+        // A plain content item, not `inspectorWithViewController`. An inspector
+        // item is built to be a narrow side panel and holds itself near that
+        // width, which kept the results column small no matter what fraction it
+        // was given. Courier's results are a co-equal column.
+        resultsItem = NSSplitViewItem(viewController: session.responseSections)
+        resultsItem.minimumThickness = Theme.Metrics.resultsMinWidth
+        resultsItem.canCollapse = true
+        // Same holding priority as the settings column. With results held
+        // higher, every point of slack went to settings and any position set
+        // for the divider was redistributed away on the next layout pass —
+        // which is why equal default widths would not stick.
+        resultsItem.holdingPriority = .defaultLow
+        resultsItem.preferredThicknessFraction = 0.4
+        addSplitViewItem(resultsItem)
+
+        // Renamed again: a restored width from the inspector-item era would
+        // otherwise win over the preferred fractions above.
+        splitView.autosaveName = "CourierColumns2"
     }
 
+    // MARK: - Content
+
     func showRequest(_ requestID: UUID?) {
-        contentViewController.showRequest(requestID)
+        session.showRequest(requestID)
     }
 
     func createRequestAtSelection() {
@@ -62,11 +118,28 @@ final class RootSplitViewController: NSSplitViewController {
         sidebarViewController.createFolderAtSelection()
     }
 
+    func flushPendingEdits() {
+        session.flushPendingEdits()
+    }
+
+    func setResponseMode(_ mode: ResponseViewController.Mode) {
+        session.setResponseMode(mode)
+    }
+
+    // MARK: - Panes
+
     func toggleSidebar() {
         toggleSidebar(nil)
     }
 
-    func toggleResponsePane() {
-        contentViewController.toggleResponsePane()
+    func toggleResultsPane() {
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            context.allowsImplicitAnimation = true
+            resultsItem.animator().isCollapsed.toggle()
+        } completionHandler: { [weak self] in
+            guard let self else { return }
+            onResultsCollapseChange?(isResultsCollapsed)
+        }
     }
 }

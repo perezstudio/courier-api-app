@@ -224,22 +224,19 @@ Secret environment variables and secret auth fields (bearer tokens, passwords, A
 Standard macOS document-style window: system titlebar with a unified toolbar, **native window tabs**, a source-list sidebar, and a split content area with the response on the right.
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│ ● ● ●  ⌸ │         Courier — Get User        │ [Env ▾]  🔍  ⊕  ⚙    │  ← unified NSToolbar
-├──────────────────────────────────────────────────────────────────────┤
-│  ╭ Get User ╮  Create User   List Orders                      ⊕      │  ← SYSTEM tab bar
-├────────┬─────────────────────────────────────────────────────────────┤
-│        │ [GET ▾]  https://api.example.com/users/{{id}}     [ Send ]  │
-│ [WS ▾] ├───────────────────────────────┬─────────────────────────────┤
-│        │ ⟨Params│Headers│Body│Auth│Var⟩│ 200 OK · 142 ms · 1.2 KB    │
-│ Users  │                               │ ⟨Body│Headers│Cookies│Time⟩ │
-│  ▸ Get │                               │                             │
-│  ▸ Post│      Request Editor           │        Response             │
-│ Orders │      (NSTabViewController)    │   (NSTabViewController)     │
-│  ▸ List│                               │                             │
-└────────┴───────────────────────────────┴─────────────────────────────┘
-  source     ← inner NSSplitViewController, draggable divider →
-   list
+┌──────────────────────────────────────────────────────────────────────────┐
+│ ● ● ● [◫]   [+] ‖ [GET ▾] [ https://api…/users ] [✈ Send] ‖ [Results|Timeline|History] [◨] │
+├──────────────┬───────────────────────────────────┬───────────────────────┤
+│ [Workspace ▾]│ ⟨Params│Headers│Body│Auth│Vars⟩   │ 200 OK · 142 ms · 1 KB│
+│ [Filter     ]│                                   │ ⟨Body│Headers│Cookies⟩│
+│              │                                   │                       │
+│ ▾ Users      │       Request settings            │        Results        │
+│   · Get User │                                   │                       │
+│ ▸ Orders     │                                   │                       │
+│              │                                   │                       │
+│ [Env ▾]      │                                   │                       │
+└──────────────┴───────────────────────────────────┴───────────────────────┘
+   sidebar              settings column                  results column
 ```
 
 1. **System titlebar.** Ordinary `NSWindow`, `.titled` style, `toolbarStyle = .unified`. Traffic lights, title, and full-screen behavior are entirely the system's.
@@ -248,9 +245,11 @@ Standard macOS document-style window: system titlebar with a unified toolbar, **
 4. **`NSTrackingSeparatorToolbarItem`** bound to the outer split view at index 0, so the toolbar separator tracks the sidebar divider as the user drags it. This is the detail that makes a unified sidebar look right rather than almost right.
 5. **Native window tabs** — see §7.2. The tab bar, its `+` button, drag-to-reorder, drag-out-to-new-window, tab overview, and the Window menu's Show Tab Bar / Merge All Windows / Move Tab to New Window are all system-provided.
 6. **Content area** stacks vertically: URL bar → inner split view.
-7. **Inner split** — nested `NSSplitViewController`, two non-sidebar items: request editor (left) and response (right). Draggable divider, response pane collapsible via Cmd+Opt+I, positions persisted with `autosaveName`.
-8. **Section switching** on both sides is `NSTabViewController` with `tabStyle = .segmentedControlOnTop` — the stock control for switching content panes.
-9. **Frame persistence** via `setFrameAutosaveName`; per-window open request and split positions via `CDUIState`.
+7. **One split, three items** — sidebar, settings, results — rather than a split nested inside a content pane, matching how Mail arranges mailboxes, message list, and message. This is what lets both toolbar tracking separators bind to the same split view (dividers 0 and 1).
+8. **Column sizing follows Admiral.** The sidebar (200–350pt) and results columns hold their width; the settings column is unbounded and yields. Settings and results share a holding priority so neither snaps back after the other is resized, and both start at `preferredThicknessFraction` 0.4.
+9. **Toolbar regions.** Sidebar: toggle at the left edge, new-request at the right. Settings: method picker, URL field, Send. Results: Results/Timeline/History picker, inspector toggle at the right. When the results column collapses, the second tracking separator *and* the mode picker are removed from the toolbar — left in place the separator jumps to the window edge and pushes the toggle into the overflow menu, stranding the user with no way to reopen the pane.
+10. **Tinting is the system's.** The method picker and Send use `NSToolbarItem.style = .prominent` with `backgroundTintColor` (the method's colour, and accent/red for send/cancel) — the same construction as Admiral's PR chip. The URL field is a borderless field inside an `NSGlassEffectView`, since a text field has no native toolbar-item equivalent.
+11. **Frame persistence** via `setFrameAutosaveName`; per-window open request and split positions via `CDUIState`.
 
 ### 7.2 Request tabs are native window tabs
 
@@ -281,10 +280,12 @@ Every region, and the stock AppKit component that implements it:
 | Method badge in tree rows | `NSTableCellView` with a second `NSTextField` styled per method — content, not chrome |
 | Content/response split | Nested `NSSplitViewController`, response item collapsible, `autosaveName` set |
 | Method picker | `NSPopUpButton` with per-item attributed titles |
-| URL bar | `NSTextField`; `{{variable}}` highlighting applied to the field editor via `NSTextStorageDelegate`; resolved-value tooltips |
-| Send / Cancel | `NSButton` (`.push`), title and action swapped by state |
-| Request sections (Params/Headers/Body/Auth/Vars) | `NSTabViewController`, `tabStyle = .segmentedControlOnTop` |
-| Response sections (Body/Headers/Cookies/Timeline) | `NSTabViewController`, `tabStyle = .segmentedControlOnTop` |
+| URL bar | Borderless `NSTextField` in an `NSGlassEffectView`; `{{variable}}` highlighting on the field editor while editing and on the attributed value when not |
+| Send / Cancel | `NSToolbarItem`, prominent style; image and tint swapped by state. Cmd+Return lives in the File menu, since a toolbar item has no key equivalent |
+| Request sections (Params/Headers/Body/Auth/Vars) | `NSTabViewController`, `tabStyle = .segmentedControlOnTop`, wrapped in a safe-area container (see below) |
+| Results mode (Results/Timeline/History) | `NSSegmentedControl` in the toolbar, driving a plain swapping controller — a tab controller would draw a second row of tabs under the control driving it |
+| Results sections (Body/Headers/Cookies) | `NSSegmentedControl` inside the Results view |
+| Method picker | `NSMenuToolbarItem`, prominent style, tinted per verb |
 | Body view mode (pretty/raw/preview) | `NSSegmentedControl` |
 | Key-value editors | `NSTableView` (view-based) — checkbox, key, value, note, delete columns; inline `NSTextField` editing; tab-to-next-field |
 | Body editor | `NSTextView` (TextKit 2) + `NSRulerView` line numbers + `NSTextStorageDelegate` highlighting |
@@ -332,7 +333,7 @@ Workspace popup at the head · source-list outline tree with system disclosure a
 One request per window tab · titles and subtitles from `window.title` / `window.subtitle` · sidebar selection navigates the current tab; Cmd+click or Cmd+T opens a new one · Cmd+W closes the tab · dirty state reflected in the title · everything else — reorder, drag-out, merge, overview, Cmd+Shift+[ / ] — inherited from the system.
 
 ### 8.3 Request editor
-**URL bar:** method popup, URL field with `{{var}}` highlighting and resolution tooltips, Send / Cancel button. Spans the full content width above the split, so it reads as belonging to both panes. Editing the URL syncs the Params table bidirectionally.
+**URL bar:** lives in the toolbar over the settings column — method picker, URL field, Send. Editing the URL syncs the Params table bidirectionally.
 **Params / Headers:** key-value tables, per-row enable, note column, common-header autocomplete, bulk-edit text mode.
 **Body:** none · raw (JSON/XML/HTML/Text/JS) · form-data (with file rows) · x-www-form-urlencoded · binary (file picker + security-scoped bookmark) · GraphQL (query + variables panes). Syntax highlighting, format/prettify action, size indicator.
 **Auth:** inherit · none · bearer · basic · API key (header or query). Secret fields route to the Keychain. All values support `{{var}}` interpolation.

@@ -1,26 +1,40 @@
 import AppKit
 
-/// Status bar above Body · Headers · Cookies · Timeline · History.
+/// The inspector column: a status bar over one of three modes.
+///
+/// The mode is chosen from the toolbar rather than from a tab bar inside the
+/// pane, so this is a plain controller that swaps children — the previous
+/// `NSTabViewController` would have drawn a second row of tabs directly under
+/// the toolbar control driving it.
 @MainActor
-final class ResponseSectionsTabViewController: NSViewController {
+final class ResponseViewController: NSViewController {
+
+    enum Mode: Int, CaseIterable {
+        case results
+        case timeline
+        case history
+
+        var label: String {
+            switch self {
+            case .results: "Results"
+            case .timeline: "Timeline"
+            case .history: "History"
+            }
+        }
+    }
 
     private let statusBadge = NSTextField(labelWithString: "")
     private let durationLabel = NSTextField(labelWithString: "")
     private let sizeLabel = NSTextField(labelWithString: "")
     private let progress = NSProgressIndicator()
     private let statusBar = NSView()
+    private let container = NSView()
 
-    private let tabs = NSTabViewController()
-    private let bodyViewController = ResponseBodyViewController()
-    private let headersViewController = PairTableViewController(
-        firstColumn: "Header",
-        secondColumn: "Value"
-    )
-    private let cookiesViewController = CookiesViewController()
+    private let resultsViewController = ResultsViewController()
     private let timelineViewController = TimelineViewController()
     private let historyViewController: RunHistoryViewController
 
-    var onSelectRun: ((UUID) -> Void)?
+    private var mode: Mode = .results
 
     init(historyViewController: RunHistoryViewController) {
         self.historyViewController = historyViewController
@@ -39,7 +53,12 @@ final class ResponseSectionsTabViewController: NSViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         setupStatusBar()
-        setupTabs()
+        setupContainer()
+
+        for child in [resultsViewController, timelineViewController, historyViewController] as [NSViewController] {
+            addChild(child)
+        }
+        setMode(.results)
         showIdle()
     }
 
@@ -73,7 +92,7 @@ final class ResponseSectionsTabViewController: NSViewController {
             statusBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             statusBar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             statusBar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            statusBar.heightAnchor.constraint(equalToConstant: 32),
+            statusBar.heightAnchor.constraint(equalToConstant: 30),
 
             stack.leadingAnchor.constraint(
                 equalTo: statusBar.leadingAnchor,
@@ -91,33 +110,42 @@ final class ResponseSectionsTabViewController: NSViewController {
         ])
     }
 
-    private func setupTabs() {
-        tabs.tabStyle = .segmentedControlOnTop
-        tabs.transitionOptions = []
-
-        addSection(bodyViewController, label: "Body")
-        addSection(headersViewController, label: "Headers")
-        addSection(cookiesViewController, label: "Cookies")
-        addSection(timelineViewController, label: "Timeline")
-        addSection(historyViewController, label: "History")
-
-        addChild(tabs)
-        let tabsView = tabs.view
-        tabsView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(tabsView)
-
+    private func setupContainer() {
+        container.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(container)
         NSLayoutConstraint.activate([
-            tabsView.topAnchor.constraint(equalTo: statusBar.bottomAnchor),
-            tabsView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            tabsView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            tabsView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            container.topAnchor.constraint(equalTo: statusBar.bottomAnchor),
+            container.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            container.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            container.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
     }
 
-    private func addSection(_ controller: NSViewController, label: String) {
-        let item = NSTabViewItem(viewController: controller)
-        item.label = label
-        tabs.addTabViewItem(item)
+    // MARK: - Mode
+
+    func setMode(_ mode: Mode) {
+        loadViewIfNeeded()
+        self.mode = mode
+
+        for subview in container.subviews {
+            subview.removeFromSuperview()
+        }
+
+        let child: NSView
+        switch mode {
+        case .results: child = resultsViewController.view
+        case .timeline: child = timelineViewController.view
+        case .history: child = historyViewController.view
+        }
+
+        child.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(child)
+        NSLayoutConstraint.activate([
+            child.topAnchor.constraint(equalTo: container.topAnchor),
+            child.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            child.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            child.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
     }
 
     // MARK: - States
@@ -127,9 +155,8 @@ final class ResponseSectionsTabViewController: NSViewController {
         statusBadge.stringValue = ""
         durationLabel.stringValue = ""
         sizeLabel.stringValue = ""
-        bodyViewController.setBody(nil, contentType: nil)
-        headersViewController.setPairs([])
-        cookiesViewController.setCookies([])
+        resultsViewController.setBody(nil, contentType: nil)
+        resultsViewController.setHeaders([])
         timelineViewController.setTiming(nil)
     }
 
@@ -156,9 +183,8 @@ final class ResponseSectionsTabViewController: NSViewController {
             .first { $0.name.lowercased() == "content-type" }?
             .value
 
-        bodyViewController.setBody(result.body, contentType: contentType)
-        headersViewController.setPairs(result.headers.map { (key: $0.name, value: $0.value) })
-        cookiesViewController.setCookies(ResponseFormatter.parseCookies(from: result.headers))
+        resultsViewController.setBody(result.body, contentType: contentType)
+        resultsViewController.setHeaders(result.headers)
         timelineViewController.setTiming(result.timing)
     }
 
@@ -169,13 +195,13 @@ final class ResponseSectionsTabViewController: NSViewController {
         durationLabel.stringValue = ""
         sizeLabel.stringValue = ""
 
-        bodyViewController.setBody(Data(message.utf8), contentType: "text/plain")
-        headersViewController.setPairs([])
-        cookiesViewController.setCookies([])
+        resultsViewController.setBody(Data(message.utf8), contentType: "text/plain")
+        resultsViewController.setHeaders([])
         timelineViewController.setTiming(nil)
     }
 
-    /// Restores a stored run, which has headers as JSON rather than live values.
+    /// Restores a stored run, whose headers arrive as JSON rather than live
+    /// values.
     func showStoredRun(
         summary: RunSummary,
         body: Data?,
@@ -200,14 +226,13 @@ final class ResponseSectionsTabViewController: NSViewController {
         let headers = ExecutionResult.decodeHeaders(from: headersJSON)
         let contentType = headers.first { $0.name.lowercased() == "content-type" }?.value
 
-        bodyViewController.setBody(body, contentType: contentType)
-        headersViewController.setPairs(headers.map { (key: $0.name, value: $0.value) })
-        cookiesViewController.setCookies(ResponseFormatter.parseCookies(from: headers))
+        resultsViewController.setBody(body, contentType: contentType)
+        resultsViewController.setHeaders(headers)
         timelineViewController.setTiming(TimingBreakdown.decode(from: timingJSON))
     }
 }
 
-/// Timeline tab: the chart plus its own scroll container.
+/// Timeline mode: the phase chart.
 @MainActor
 final class TimelineViewController: NSViewController {
 

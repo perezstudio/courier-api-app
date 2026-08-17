@@ -41,10 +41,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         configureToolbar(window)
         updateTitles()
 
-        libraryObservation = libraryController.observe { [weak self] in
-            self?.refreshEnvironmentPicker()
-        }
-        refreshEnvironmentPicker()
     }
 
     @available(*, unavailable)
@@ -73,26 +69,65 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     private func configureToolbar(_ window: NSWindow) {
+        // Forces the split views to load, since both tracking separators bind
+        // to them at toolbar construction time.
+        _ = rootSplit.view
+
         let delegate = MainToolbarDelegate(
             splitView: rootSplit.splitView,
-            onNewRequest: { [weak self] in self?.rootSplit.createRequestAtSelection() },
-            onFilterChange: { [weak self] text in self?.applyFilter(text) },
-            onEnvironmentChange: { [weak self] id in
-                self?.libraryController.setActiveEnvironment(id)
-            },
-            onEditEnvironments: { [weak self] in self?.showEnvironments(nil) }
+            callbacks: MainToolbarDelegate.Callbacks(
+                newRequest: { [weak self] in self?.rootSplit.createRequestAtSelection() },
+                methodChange: { [weak self] method in self?.rootSplit.session.setMethod(method) },
+                urlChange: { [weak self] url in self?.rootSplit.session.setURL(url) },
+                send: { [weak self] in self?.rootSplit.session.sendOrCancel() },
+                toggleInspector: { [weak self] in self?.rootSplit.toggleResultsPane() },
+                responseModeChange: { [weak self] mode in
+                    self?.rootSplit.setResponseMode(mode)
+                }
+            )
         )
         self.toolbarDelegate = delegate
 
         let toolbar = NSToolbar(identifier: "CourierMainToolbar")
         toolbar.delegate = delegate
         toolbar.displayMode = .iconOnly
-        toolbar.allowsUserCustomization = true
-        toolbar.autosavesConfiguration = true
+        // Customization is off deliberately: the URL field and Send live here
+        // now, and dragging either out would leave no way to send a request.
+        toolbar.allowsUserCustomization = false
+        toolbar.autosavesConfiguration = false
+        delegate.toolbar = toolbar
 
         window.toolbar = toolbar
         window.toolbarStyle = .unified
-        window.titleVisibility = .visible
+        // Hidden, like Mail and Safari. A visible title *plus* subtitle renders
+        // as a two-line block that both inflates the toolbar's height and eats
+        // the left of the content region where the URL bar belongs. The request
+        // name still reaches the user through the tab label, set below.
+        window.titleVisibility = .hidden
+
+        rootSplit.onEditEnvironments = { [weak self] in self?.showEnvironments(nil) }
+        bindContentToToolbar()
+    }
+
+    /// Carries editor state up into the toolbar, which the window owns.
+    private func bindContentToToolbar() {
+        let session = rootSplit.session
+
+        session.onRequestChange = { [weak self] method, url, hasRequest in
+            self?.toolbarDelegate?.updateRequest(method: method, url: url, hasRequest: hasRequest)
+        }
+        session.onSendingChange = { [weak self] isSending in
+            self?.toolbarDelegate?.setSending(isSending)
+        }
+        session.onUnresolvedVariablesChange = { [weak self] names in
+            self?.toolbarDelegate?.setUnresolvedVariables(names)
+        }
+        rootSplit.onResultsCollapseChange = { [weak self] collapsed in
+            self?.toolbarDelegate?.setResponseCollapsed(collapsed)
+        }
+
+        toolbarDelegate?.setResponseCollapsed(rootSplit.isResultsCollapsed)
+        toolbarDelegate?.updateRequest(method: "GET", url: "", hasRequest: false)
     }
 
     // MARK: - Content
@@ -115,6 +150,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
             window.title = "Courier"
             window.subtitle = libraryController.activeWorkspace?.name ?? ""
         }
+
+        // Set explicitly rather than inherited: with titleVisibility hidden the
+        // tab label is the only place the request name appears.
+        window.tab.title = window.title
     }
 
     /// Refreshes the title after the underlying request changes elsewhere.
@@ -123,10 +162,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     }
 
     // MARK: - Actions
-
-    private func applyFilter(_ text: String) {
-        libraryController.filterText = text
-    }
 
     // MARK: - Menu actions
     //
@@ -145,8 +180,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         registry.openInNewTab(requestID: nil)
     }
 
+    @objc func sendRequest(_ sender: Any?) {
+        rootSplit.session.sendOrCancel()
+    }
+
     @objc func toggleResponsePaneAction(_ sender: Any?) {
-        rootSplit.toggleResponsePane()
+        rootSplit.toggleResultsPane()
     }
 
     @objc func showEnvironments(_ sender: Any?) {
@@ -156,21 +195,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         controller.present(in: window)
     }
 
-    /// Repopulates the toolbar picker from shared state. Every window does
-    /// this, so switching environments in one tab shows in all of them.
-    private func refreshEnvironmentPicker() {
-        toolbarDelegate?.updateEnvironments(
-            libraryController.environmentsForActiveWorkspace(),
-            activeID: libraryController.activeEnvironmentID
-        )
-    }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
         case #selector(newRequest(_:)), #selector(newFolder(_:)):
             // Both need somewhere to put the new item.
             return libraryController.activeWorkspace != nil
-        case #selector(toggleResponsePaneAction(_:)):
+        case #selector(toggleResponsePaneAction(_:)), #selector(sendRequest(_:)):
             return requestID != nil
         default:
             return true
