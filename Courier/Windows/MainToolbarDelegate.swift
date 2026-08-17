@@ -22,6 +22,7 @@ final class MainToolbarDelegate: NSObject, NSToolbarDelegate {
         var send: () -> Void
         var toggleInspector: () -> Void
         var responseModeChange: (ResponseViewController.Mode) -> Void
+        var resultsSectionChange: (ResultsViewController.Section) -> Void
     }
 
     /// Both separators track the same split view now that the window is a flat
@@ -35,6 +36,12 @@ final class MainToolbarDelegate: NSObject, NSToolbarDelegate {
     private weak var urlField: VariableHighlightingTextField?
     private weak var sendItem: NSToolbarItem?
     private weak var inspectorItem: NSToolbarItem?
+    private weak var resultsSectionGroup: NSToolbarItemGroup?
+    private weak var statusItem: NSToolbarItem?
+    private weak var statusButton: NSButton?
+    private var itemCache: [NSToolbarItem.Identifier: NSToolbarItem] = [:]
+    private var currentStatus: ResponseStatus?
+    private var isResultsCollapsed = false
     private weak var responseModeControl: NSSegmentedControl?
     weak var toolbar: NSToolbar?
 
@@ -52,37 +59,62 @@ final class MainToolbarDelegate: NSObject, NSToolbarDelegate {
         static let method = NSToolbarItem.Identifier("courier.method")
         static let url = NSToolbarItem.Identifier("courier.url")
         static let send = NSToolbarItem.Identifier("courier.send")
+        static let responseStatus = NSToolbarItem.Identifier("courier.responseStatus")
         static let responseMode = NSToolbarItem.Identifier("courier.responseMode")
+        static let resultsSection = NSToolbarItem.Identifier("courier.resultsSection")
         static let toggleInspector = NSToolbarItem.Identifier("courier.toggleInspector")
         static let contentSeparator = NSToolbarItem.Identifier("courier.contentSeparator")
     }
 
-    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [
-            // Sidebar region: toggle on the left, add pushed to the right edge.
+    /// The single source of truth for what the toolbar contains right now.
+    ///
+    /// Both the delegate callback and the live rebuild read this. Writing the
+    /// list out twice is exactly how the sidebar's toggle and add buttons
+    /// silently swapped back to their old order — the rebuild carried a stale
+    /// copy.
+    private func currentIdentifiers() -> [NSToolbarItem.Identifier] {
+        var identifiers: [NSToolbarItem.Identifier] = [
+            // Sidebar region: toggle at the left, add pushed to the right edge.
             .toggleSidebar,
             .flexibleSpace,
             ItemID.newRequest,
             ItemID.sidebarSeparator,
-            // Middle region: three separate items rather than one grouped
-            // view, so each gets standard toolbar treatment. The explicit
-            // spaces matter — view-based items with fixed min/max sizes get
-            // packed flush against each other, so the capsules touched.
+            // Settings region.
             ItemID.method,
             .space,
             ItemID.url,
             .space,
             ItemID.send,
-            ItemID.contentSeparator,
-            // Inspector region: mode picker left, close button right.
-            ItemID.responseMode,
-            .flexibleSpace,
-            ItemID.toggleInspector,
         ]
+
+        if isResultsCollapsed {
+            // No divider to track and no region to fill; just the toggle.
+            identifiers.append(.flexibleSpace)
+        } else {
+            identifiers.append(ItemID.contentSeparator)
+            if currentStatus != nil { identifiers.append(ItemID.responseStatus) }
+            identifiers.append(ItemID.responseMode)
+            identifiers.append(.flexibleSpace)
+            if responseModeControl?.selectedSegment == ResponseViewController.Mode.results.rawValue {
+                identifiers.append(ItemID.resultsSection)
+            }
+        }
+        identifiers.append(ItemID.toggleInspector)
+        return identifiers
+    }
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        currentIdentifiers()
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        toolbarDefaultItemIdentifiers(toolbar) + [.flexibleSpace, .space]
+        [
+            .toggleSidebar, ItemID.newRequest, ItemID.sidebarSeparator,
+            ItemID.method, ItemID.url, ItemID.send,
+            ItemID.contentSeparator, ItemID.responseStatus, ItemID.responseMode,
+            ItemID.resultsSection, ItemID.toggleInspector,
+            .flexibleSpace, .space,
+        ]
     }
 
     // MARK: - Items
@@ -92,6 +124,16 @@ final class MainToolbarDelegate: NSObject, NSToolbarDelegate {
         itemForItemIdentifier itemIdentifier: NSToolbarItem.Identifier,
         willBeInsertedIntoToolbar flag: Bool
     ) -> NSToolbarItem? {
+        // Reused, not rebuilt. A rebuild re-asks for every item, and returning
+        // fresh ones would recreate the URL field — losing its text, its
+        // highlighting, and the user's insertion point mid-edit.
+        if let cached = itemCache[itemIdentifier] { return cached }
+        let item = makeItem(itemIdentifier)
+        itemCache[itemIdentifier] = item
+        return item
+    }
+
+    private func makeItem(_ itemIdentifier: NSToolbarItem.Identifier) -> NSToolbarItem? {
         switch itemIdentifier {
         case ItemID.newRequest:
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
@@ -217,9 +259,29 @@ final class MainToolbarDelegate: NSObject, NSToolbarDelegate {
             sendItem = item
             return item
 
+        case ItemID.responseStatus:
+            // An NSButton rather than a title-only NSToolbarItem: the toolbar
+            // runs in `.iconOnly` display mode, where an item carrying only a
+            // title draws as bare text with no button chrome at all.
+            let button = NSButton(title: "", target: nil, action: nil)
+            button.bezelStyle = .push
+            statusButton = button
+
+            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            item.label = "Status"
+            item.paletteLabel = "Response Status"
+            item.view = button
+            statusItem = item
+            if let status = currentStatus { apply(status) }
+            return item
+
         case ItemID.responseMode:
+            let modes = ResponseViewController.Mode.allCases
             let control = NSSegmentedControl(
-                labels: ResponseViewController.Mode.allCases.map(\.label),
+                images: modes.map {
+                    NSImage(systemSymbolName: $0.symbolName, accessibilityDescription: $0.label)
+                        ?? NSImage()
+                },
                 trackingMode: .selectOne,
                 target: self,
                 action: #selector(responseModeChanged)
@@ -227,6 +289,10 @@ final class MainToolbarDelegate: NSObject, NSToolbarDelegate {
             control.selectedSegment = 0
             control.controlSize = .regular
             control.setAccessibilityLabel("Results view")
+            // Icons alone are ambiguous; the tooltip carries the name.
+            for (index, mode) in modes.enumerated() {
+                control.setToolTip(mode.label, forSegment: index)
+            }
             responseModeControl = control
 
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
@@ -235,6 +301,35 @@ final class MainToolbarDelegate: NSObject, NSToolbarDelegate {
             item.toolTip = "Results, timeline, or history"
             item.view = control
             return item
+
+        case ItemID.resultsSection:
+            // Built with the titles initialiser, which backs the group with a
+            // real segmented control and picks up the toolbar's standard
+            // (glass) styling. Constructing it by hand with
+            // `controlRepresentation = .expanded` produced separate flat
+            // buttons instead.
+            let sections = ResultsViewController.Section.allCases
+            let group = NSToolbarItemGroup(
+                itemIdentifier: itemIdentifier,
+                images: sections.map {
+                    NSImage(systemSymbolName: $0.symbolName, accessibilityDescription: $0.label)
+                        ?? NSImage()
+                },
+                selectionMode: .selectOne,
+                // Labels still supplied: they carry the names for
+                // accessibility and the toolbar's text display mode.
+                labels: sections.map(\.label),
+                target: self,
+                action: #selector(resultsSectionChanged(_:))
+            )
+            group.label = "Section"
+            group.paletteLabel = "Response Section"
+            group.toolTip = "Body, headers, or cookies"
+            group.controlRepresentation = .automatic
+            group.isBordered = true
+            group.setSelected(true, at: 0)
+            resultsSectionGroup = group
+            return group
 
         case ItemID.toggleInspector:
             // A bordered NSToolbarItem, matching the + button and the system's
@@ -301,32 +396,64 @@ final class MainToolbarDelegate: NSObject, NSToolbarDelegate {
             systemSymbolName: isCollapsed ? "sidebar.right" : "sidebar.squares.right",
             accessibilityDescription: isCollapsed ? "Show results" : "Hide results"
         )
+        isResultsCollapsed = isCollapsed
+        rebuildResultsRegion()
+    }
 
-        // With the inspector closed there is no divider for the separator to
-        // follow and no region for the mode picker to sit in. Left in place the
-        // separator jumps to the window edge and pushes the toggle into the
-        // overflow menu — stranding the user with no way to reopen the pane. So
-        // both are pulled out while collapsed, leaving just the toggle.
+    /// Reconciles the toolbar against `currentIdentifiers()`.
+    ///
+    /// Items that come and go — separator, status chip, mode picker, section
+    /// group — are handled by recomputing the whole list rather than by
+    /// case-by-case inserts, which previously produced a negative index and a
+    /// separator that stranded the toggle in the overflow menu.
+    private func rebuildResultsRegion() {
         guard let toolbar else { return }
 
-        func indexOf(_ identifier: NSToolbarItem.Identifier) -> Int? {
-            toolbar.items.firstIndex { $0.itemIdentifier == identifier }
-        }
+        let desired = currentIdentifiers()
+        guard toolbar.items.map(\.itemIdentifier) != desired else { return }
 
-        if isCollapsed {
-            for identifier in [ItemID.responseMode, ItemID.contentSeparator] {
-                if let index = indexOf(identifier) { toolbar.removeItem(at: index) }
-            }
-        } else if indexOf(ItemID.contentSeparator) == nil {
-            guard let toggleIndex = indexOf(ItemID.toggleInspector) else { return }
-            // Rebuilt in order ahead of the toggle: separator, picker, space.
-            toolbar.insertItem(withItemIdentifier: ItemID.contentSeparator, at: toggleIndex - 1)
-            toolbar.insertItem(withItemIdentifier: ItemID.responseMode, at: toggleIndex)
+        for index in stride(from: toolbar.items.count - 1, through: 0, by: -1) {
+            toolbar.removeItem(at: index)
+        }
+        for (index, identifier) in desired.enumerated() {
+            toolbar.insertItem(withItemIdentifier: identifier, at: index)
         }
     }
 
     func setResponseMode(_ mode: ResponseViewController.Mode) {
         responseModeControl?.selectedSegment = mode.rawValue
+        rebuildResultsRegion()
+    }
+
+    /// `nil` removes the chip from the toolbar entirely.
+    func setStatus(_ status: ResponseStatus?) {
+        currentStatus = status
+        if let status { apply(status) }
+        rebuildResultsRegion()
+    }
+
+    private func apply(_ status: ResponseStatus) {
+        guard let button = statusButton else { return }
+
+        // `contentTintColor` only tints template images, so it left the title
+        // in the default label colour. An attributed title is what actually
+        // colours the text.
+        button.attributedTitle = NSAttributedString(
+            string: status.title,
+            attributes: [
+                .foregroundColor: status.color,
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold),
+            ]
+        )
+
+        // Sized to the title rather than to a fixed width, which left a short
+        // code like "200" floating in a much wider box.
+        button.sizeToFit()
+        let size = NSSize(width: max(44, ceil(button.frame.width)), height: 24)
+        button.setFrameSize(size)
+        statusItem?.minSize = size
+        statusItem?.maxSize = size
+        statusItem?.toolTip = "Response status \(status.title)"
     }
 
     /// A glass capsule wrapping `content`.
@@ -390,8 +517,15 @@ final class MainToolbarDelegate: NSObject, NSToolbarDelegate {
 
     @objc private func responseModeChanged(_ sender: NSSegmentedControl) {
         guard let mode = ResponseViewController.Mode(rawValue: sender.selectedSegment) else { return }
+        rebuildResultsRegion()
         callbacks.responseModeChange(mode)
     }
+
+    @objc private func resultsSectionChanged(_ sender: NSToolbarItemGroup) {
+        guard let section = ResultsViewController.Section(rawValue: sender.selectedIndex) else { return }
+        callbacks.resultsSectionChange(section)
+    }
+
 }
 
 extension MainToolbarDelegate: NSTextFieldDelegate {

@@ -62,17 +62,35 @@ final class ResponseBodyViewController: NSViewController {
     }
 
     private func setupLayout() {
+        // A footer, not a header: the body is what the user is reading, so it
+        // starts at the top of the pane and the controls sit under it.
         let bar = NSStackView(views: [modeControl, searchField])
         bar.orientation = .horizontal
         bar.spacing = Theme.Metrics.tightPadding
         bar.translatesAutoresizingMaskIntoConstraints = false
 
+        let separator = NSBox()
+        separator.boxType = .separator
+        separator.translatesAutoresizingMaskIntoConstraints = false
+
         container.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(bar)
         view.addSubview(container)
+        view.addSubview(separator)
+        view.addSubview(bar)
 
         NSLayoutConstraint.activate([
-            bar.topAnchor.constraint(equalTo: view.topAnchor, constant: Theme.Metrics.tightPadding),
+            container.topAnchor.constraint(equalTo: view.topAnchor),
+            container.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            container.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            container.bottomAnchor.constraint(equalTo: separator.topAnchor),
+
+            separator.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            separator.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            separator.bottomAnchor.constraint(
+                equalTo: bar.topAnchor,
+                constant: -Theme.Metrics.tightPadding
+            ),
+
             bar.leadingAnchor.constraint(
                 equalTo: view.leadingAnchor,
                 constant: Theme.Metrics.standardPadding
@@ -81,15 +99,11 @@ final class ResponseBodyViewController: NSViewController {
                 equalTo: view.trailingAnchor,
                 constant: -Theme.Metrics.standardPadding
             ),
-            searchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 140),
-
-            container.topAnchor.constraint(
-                equalTo: bar.bottomAnchor,
-                constant: Theme.Metrics.tightPadding
+            bar.bottomAnchor.constraint(
+                equalTo: view.bottomAnchor,
+                constant: -Theme.Metrics.tightPadding
             ),
-            container.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            container.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            container.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            searchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 140),
         ])
     }
 

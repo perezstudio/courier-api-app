@@ -24,6 +24,9 @@ final class RequestSessionController {
     var onRequestChange: ((String, String, Bool) -> Void)?
     var onSendingChange: ((Bool) -> Void)?
     var onUnresolvedVariablesChange: ((Set<String>) -> Void)?
+    /// `nil` clears the toolbar's status chip — nothing has run for this
+    /// request yet, or one is in flight.
+    var onStatusChange: ((ResponseStatus?) -> Void)?
 
     init(libraryController: LibraryController, secretStore: SecretStore) {
         self.libraryController = libraryController
@@ -101,6 +104,10 @@ final class RequestSessionController {
         responseSections.setMode(mode)
     }
 
+    func setResultsSection(_ section: ResultsViewController.Section) {
+        responseSections.setResultsSection(section)
+    }
+
     // MARK: - Toolbar-driven edits
 
     func setMethod(_ method: String) {
@@ -151,12 +158,31 @@ final class RequestSessionController {
 
     private func applyResponseState(_ state: ResponseController.State) {
         switch state {
-        case .idle: responseSections.showIdle()
-        case .sending: responseSections.showSending()
-        case .finished(let result): responseSections.showResult(result)
-        case .failed(let message): responseSections.showError(message)
+        case .idle:
+            responseSections.showIdle()
+            onStatusChange?(nil)
+
+        case .sending:
+            responseSections.showSending()
+            // Cleared while in flight: the Send button already turns into a red
+            // stop control, so a second in-flight indicator would just make the
+            // toolbar shuffle for no added information.
+            onStatusChange?(nil)
+
+        case .finished(let result):
+            responseSections.showResult(result)
+            onStatusChange?(.from(result))
+
+        case .failed:
+            responseSections.showError(stateMessage(state))
+            onStatusChange?(.failure)
         }
         onSendingChange?(responseController.isSending)
+    }
+
+    private func stateMessage(_ state: ResponseController.State) -> String {
+        if case .failed(let message) = state { return message }
+        return ""
     }
 
     private func refreshVariableState() {
@@ -174,6 +200,9 @@ final class RequestSessionController {
 
     private func showStoredRun(_ runID: UUID) {
         guard let stored = responseController.storedRun(id: runID) else { return }
+        // Replaying from history has to update the chip too, or it keeps
+        // showing the live run's status next to a different response.
+        onStatusChange?(.from(stored.summary))
         responseSections.showStoredRun(
             summary: stored.summary,
             body: stored.body,

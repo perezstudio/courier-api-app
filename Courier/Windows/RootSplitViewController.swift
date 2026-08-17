@@ -66,6 +66,10 @@ final class RootSplitViewController: NSSplitViewController {
         sidebarItem.maximumThickness = Theme.Metrics.sidebarMaxWidth
         sidebarItem.canCollapse = true
         sidebarItem.holdingPriority = .defaultLow + 1
+        // Set per column, not on the window. NSSplitViewController manages the
+        // titlebar separator per split item and overrides the window-level
+        // style, which is why setting it there had no effect.
+        sidebarItem.titlebarSeparatorStyle = .line
         addSplitViewItem(sidebarItem)
 
         // No maximum, and the lowest holding priority of the three: this is the
@@ -82,12 +86,16 @@ final class RootSplitViewController: NSSplitViewController {
         // the window reaches its final size, so the arithmetic was against the
         // wrong width. AppKit applies these at the right point in layout.
         settingsItem.preferredThicknessFraction = 0.4
+        settingsItem.titlebarSeparatorStyle = .line
         addSplitViewItem(settingsItem)
 
         // A plain content item, not `inspectorWithViewController`. An inspector
         // item is built to be a narrow side panel and holds itself near that
         // width, which kept the results column small no matter what fraction it
         // was given. Courier's results are a co-equal column.
+        // Wrapped for the same reason as the settings column: with
+        // .fullSizeContentView the pane runs under the toolbar, and the code
+        // view's line-number ruler drew on top of it.
         resultsItem = NSSplitViewItem(viewController: session.responseSections)
         resultsItem.minimumThickness = Theme.Metrics.resultsMinWidth
         resultsItem.canCollapse = true
@@ -97,6 +105,7 @@ final class RootSplitViewController: NSSplitViewController {
         // which is why equal default widths would not stick.
         resultsItem.holdingPriority = .defaultLow
         resultsItem.preferredThicknessFraction = 0.4
+        resultsItem.titlebarSeparatorStyle = .line
         addSplitViewItem(resultsItem)
 
         // Renamed again: a restored width from the inspector-item era would
@@ -124,6 +133,10 @@ final class RootSplitViewController: NSSplitViewController {
 
     func setResponseMode(_ mode: ResponseViewController.Mode) {
         session.setResponseMode(mode)
+    }
+
+    func setResultsSection(_ section: ResultsViewController.Section) {
+        session.setResultsSection(section)
     }
 
     // MARK: - Panes

@@ -27,7 +27,7 @@ enum Theme {
     }
 
     /// HTTP methods, in the order they appear in the picker.
-    enum Method: String, CaseIterable {
+    nonisolated enum Method: String, CaseIterable {
         case get = "GET"
         case post = "POST"
         case put = "PUT"
@@ -48,12 +48,12 @@ enum Theme {
         }
     }
 
-    static func color(forMethod method: String) -> NSColor {
+    nonisolated static func color(forMethod method: String) -> NSColor {
         Method(rawValue: method.uppercased())?.color ?? .systemGray
     }
 
     /// Color for an HTTP status code, by class.
-    static func color(forStatusCode code: Int) -> NSColor {
+    nonisolated static func color(forStatusCode code: Int) -> NSColor {
         switch code {
         case 200..<300: .systemGreen
         case 300..<400: .systemYellow

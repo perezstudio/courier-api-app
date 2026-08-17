@@ -83,6 +83,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
                 toggleInspector: { [weak self] in self?.rootSplit.toggleResultsPane() },
                 responseModeChange: { [weak self] mode in
                     self?.rootSplit.setResponseMode(mode)
+                },
+                resultsSectionChange: { [weak self] section in
+                    self?.rootSplit.setResultsSection(section)
                 }
             )
         )
@@ -99,6 +102,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
         window.toolbar = toolbar
         window.toolbarStyle = .unified
+        // Held explicitly: with .fullSizeContentView the automatic style drops
+        // the divider depending on what sits under the toolbar, so it
+        // disappeared as soon as a response was showing.
+        window.titlebarSeparatorStyle = .line
         // Hidden, like Mail and Safari. A visible title *plus* subtitle renders
         // as a two-line block that both inflates the toolbar's height and eats
         // the left of the content region where the URL bar belongs. The request
@@ -121,6 +128,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         }
         session.onUnresolvedVariablesChange = { [weak self] names in
             self?.toolbarDelegate?.setUnresolvedVariables(names)
+        }
+        session.onStatusChange = { [weak self] status in
+            self?.toolbarDelegate?.setStatus(status)
         }
         rootSplit.onResultsCollapseChange = { [weak self] collapsed in
             self?.toolbarDelegate?.setResponseCollapsed(collapsed)

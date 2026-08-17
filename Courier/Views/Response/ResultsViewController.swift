@@ -8,18 +8,29 @@ import AppKit
 @MainActor
 final class ResultsViewController: NSViewController {
 
-    private enum Section: Int {
+    /// Driven from the toolbar rather than by a control in this view.
+    enum Section: Int, CaseIterable {
         case body
         case headers
         case cookies
+
+        var label: String {
+            switch self {
+            case .body: "Body"
+            case .headers: "Headers"
+            case .cookies: "Cookies"
+            }
+        }
+
+        var symbolName: String {
+            switch self {
+            case .body: "curlybraces"
+            case .headers: "list.bullet.rectangle"
+            case .cookies: "circle.grid.2x2"
+            }
+        }
     }
 
-    private let picker = NSSegmentedControl(
-        labels: ["Body", "Headers", "Cookies"],
-        trackingMode: .selectOne,
-        target: nil,
-        action: nil
-    )
     private let container = NSView()
 
     private let bodyViewController = ResponseBodyViewController()
@@ -39,27 +50,11 @@ final class ResultsViewController: NSViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        picker.selectedSegment = 0
-        picker.controlSize = .small
-        picker.target = self
-        picker.action = #selector(sectionChanged)
-        picker.translatesAutoresizingMaskIntoConstraints = false
         container.translatesAutoresizingMaskIntoConstraints = false
-
-        view.addSubview(picker)
         view.addSubview(container)
 
         NSLayoutConstraint.activate([
-            picker.topAnchor.constraint(equalTo: view.topAnchor, constant: Theme.Metrics.tightPadding),
-            picker.leadingAnchor.constraint(
-                equalTo: view.leadingAnchor,
-                constant: Theme.Metrics.standardPadding
-            ),
-
-            container.topAnchor.constraint(
-                equalTo: picker.bottomAnchor,
-                constant: Theme.Metrics.tightPadding
-            ),
+            container.topAnchor.constraint(equalTo: view.topAnchor),
             container.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             container.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             container.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -80,6 +75,11 @@ final class ResultsViewController: NSViewController {
     func setHeaders(_ headers: [(name: String, value: String)]) {
         headersViewController.setPairs(headers.map { (key: $0.name, value: $0.value) })
         cookiesViewController.setCookies(ResponseFormatter.parseCookies(from: headers))
+    }
+
+    func setSection(_ section: Section) {
+        loadViewIfNeeded()
+        showSection(section)
     }
 
     private func showSection(_ section: Section) {
@@ -106,8 +106,4 @@ final class ResultsViewController: NSViewController {
         ])
     }
 
-    @objc private func sectionChanged() {
-        guard let next = Section(rawValue: picker.selectedSegment) else { return }
-        showSection(next)
-    }
 }
