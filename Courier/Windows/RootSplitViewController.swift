@@ -26,9 +26,14 @@ final class RootSplitViewController: NSSplitViewController {
     private var settingsItem: NSSplitViewItem!
     private var resultsItem: NSSplitViewItem!
 
-    /// Fires when the results column collapses or expands, so the toolbar's
-    /// inspector button can reflect it.
+    /// Fires once the results column has settled, so the toolbar's inspector
+    /// button can reflect it.
     var onResultsCollapseChange: ((Bool) -> Void)?
+
+    /// Fires *before* the animation, carrying the direction it is about to go.
+    var onResultsCollapseWillChange: ((Bool) -> Void)?
+
+    private var isTogglingResults = false
 
     /// Forwarded to the sidebar's environment picker.
     var onEditEnvironments: (() -> Void)? {
@@ -147,13 +152,33 @@ final class RootSplitViewController: NSSplitViewController {
         toggleSidebar(nil)
     }
 
+    /// Collapses or expands the results pane, sequenced with the toolbar.
+    ///
+    /// Closing hides the results toolbar items first, then shrinks the pane.
+    /// Opening runs the other way round: the pane grows, and the items arrive
+    /// once it has settled. Both fall out of one marker — `willChange` sets it
+    /// before the animation, the completion handler clears it — because on
+    /// expand the pane is still collapsed when the marker clears, so the items
+    /// stay away until the settled state lands.
     func toggleResultsPane() {
+        // A second click mid-flight would interleave the two directions and
+        // leave the tracking separator inserted against a divider that is on
+        // its way out.
+        guard !isTogglingResults else { return }
+        isTogglingResults = true
+
+        let willCollapse = !resultsItem.isCollapsed
+        onResultsCollapseWillChange?(willCollapse)
+
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.2
+            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+                ? 0
+                : 0.2
             context.allowsImplicitAnimation = true
-            resultsItem.animator().isCollapsed.toggle()
+            resultsItem.animator().isCollapsed = willCollapse
         } completionHandler: { [weak self] in
             guard let self else { return }
+            isTogglingResults = false
             onResultsCollapseChange?(isResultsCollapsed)
         }
     }

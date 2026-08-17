@@ -138,10 +138,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         session.onStatusChange = { [weak self] status in
             self?.toolbarDelegate?.setStatus(status)
         }
+        rootSplit.onResultsCollapseWillChange = { [weak self] willCollapse in
+            self?.toolbarDelegate?.setResultsCollapsePending(willCollapse)
+        }
         rootSplit.onResultsCollapseChange = { [weak self] collapsed in
             self?.toolbarDelegate?.setResponseCollapsed(collapsed)
         }
 
+        // Read live rather than mirrored, so a rebuild can never act on a
+        // stale collapse state.
+        toolbarDelegate?.isResultsPaneCollapsed = { [weak rootSplit] in
+            rootSplit?.isResultsCollapsed ?? false
+        }
         toolbarDelegate?.setResponseCollapsed(rootSplit.isResultsCollapsed)
         toolbarDelegate?.updateRequest(method: "GET", url: "", hasRequest: false)
     }

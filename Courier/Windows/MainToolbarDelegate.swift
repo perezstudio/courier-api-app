@@ -41,7 +41,28 @@ final class MainToolbarDelegate: NSObject, NSToolbarDelegate {
     private var itemCache: [NSToolbarItem.Identifier: NSToolbarItem] = [:]
     private var currentStatus: ResponseStatus?
     private var currentMode = ResponseViewController.Mode.results
-    private var isResultsCollapsed = false
+
+    /// Reads the results pane's collapsed state live from the split view.
+    ///
+    /// Deliberately not a stored mirror of it. A shadow copy drifts — Admiral
+    /// hit exactly this, where a stale value left its inspector group missing
+    /// until an unrelated refresh healed it.
+    var isResultsPaneCollapsed: (() -> Bool)?
+
+    /// Set just before the collapse animation starts, so the results items
+    /// leave the toolbar before the pane visually shrinks; cleared when the
+    /// settled state lands, which is what brings them back on expand.
+    private var resultsCollapsePending = false {
+        didSet {
+            guard oldValue != resultsCollapsePending else { return }
+            rebuildResultsRegion()
+        }
+    }
+
+    /// An in-flight collapse counts as collapsed, so the items go up front.
+    private var isResultsCollapsed: Bool {
+        resultsCollapsePending || (isResultsPaneCollapsed?() ?? false)
+    }
     private weak var responseModeControl: NSSegmentedControl?
     weak var toolbar: NSToolbar?
 
@@ -91,17 +112,15 @@ final class MainToolbarDelegate: NSObject, NSToolbarDelegate {
             // No divider to track and no region to fill; just the toggle.
             identifiers.append(.flexibleSpace)
         } else {
-            // The status chip and the section group are always present and
-            // hidden when they have nothing to show, rather than added and
-            // removed as state changes.
+            // Membership here is what animates the results items in and out
+            // with the pane: NSToolbar animates its own inserts and removes.
             //
-            // This is not a style preference. Changing the item set runs
-            // `rebuildResultsRegion`, which removes and re-inserts every item,
-            // and that teardown destroys the toolbar's material to the right of
-            // the tracking separator: the response body was left showing
-            // straight through the toolbar. Since a chip appearing was the only
-            // thing that changed the list on a send, sending a request was
-            // enough to break the toolbar every time.
+            // Whether each item is *visible* once present is a separate axis,
+            // carried by `isHidden` — the chip has nothing to show before a
+            // response, and the section group belongs to the results mode only.
+            // Keeping those on `isHidden` means an arriving response never
+            // changes the item set, which is what stopped a send from tearing
+            // the toolbar down.
             identifiers.append(ItemID.contentSeparator)
             identifiers.append(ItemID.responseStatus)
             identifiers.append(ItemID.responseMode)
@@ -409,38 +428,32 @@ final class MainToolbarDelegate: NSObject, NSToolbarDelegate {
         }
     }
 
+    /// Called before the collapse animation starts. Dropping the results items
+    /// here is what animates them out ahead of the pane shrinking.
+    func setResultsCollapsePending(_ willCollapse: Bool) {
+        resultsCollapsePending = willCollapse
+    }
+
+    /// Called once the pane has settled. Clearing the marker brings the items
+    /// back, so on expand they arrive after the pane has finished opening.
     func setResponseCollapsed(_ isCollapsed: Bool) {
         inspectorItem?.image = NSImage(
             systemSymbolName: isCollapsed ? "sidebar.right" : "sidebar.squares.right",
             accessibilityDescription: isCollapsed ? "Show results" : "Hide results"
         )
-        isResultsCollapsed = isCollapsed
+        resultsCollapsePending = false
         rebuildResultsRegion()
     }
 
-    /// Reconciles the toolbar against `currentIdentifiers()`.
+    /// Reconciles the toolbar against `currentIdentifiers()`, replacing only
+    /// the identifiers that actually changed.
     ///
-    /// Recomputes the whole list rather than doing case-by-case inserts, which
-    /// previously produced a negative index and a separator that stranded the
-    /// toggle in the overflow menu.
-    ///
-    /// Called only when the results pane collapses or expands, because it is
-    /// destructive: removing and re-inserting every item takes the toolbar's
-    /// material with it in the region past the tracking separator. Anything
-    /// that merely comes and goes with state — the status chip, the section
-    /// group — stays in the list permanently and toggles `isHidden` instead.
+    /// This used to remove and re-insert every item. That was destructive in
+    /// two ways: it took the toolbar's material with it, leaving the response
+    /// body showing through the toolbar, and because NSToolbar animates each
+    /// insert and remove, it made every untouched item flash on any change.
     private func rebuildResultsRegion() {
-        guard let toolbar else { return }
-
-        let desired = currentIdentifiers()
-        guard toolbar.items.map(\.itemIdentifier) != desired else { return }
-
-        for index in stride(from: toolbar.items.count - 1, through: 0, by: -1) {
-            toolbar.removeItem(at: index)
-        }
-        for (index, identifier) in desired.enumerated() {
-            toolbar.insertItem(withItemIdentifier: identifier, at: index)
-        }
+        toolbar?.applyIdentifiers(currentIdentifiers())
     }
 
     func setResponseMode(_ mode: ResponseViewController.Mode) {
