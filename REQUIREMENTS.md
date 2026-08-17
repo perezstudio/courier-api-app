@@ -313,7 +313,7 @@ Everything else in §7.3 is a stock control. If a fourth candidate appears durin
 Going AppKit costs code; these are the things that make it pay:
 
 - **Window tabs, entirely free** — including drag-out, merge, overview, and the Window menu (§7.2).
-- **Undo/redo for free** — wire `viewContext.undoManager` to the window's undo manager. Cmd+Z undoes a deleted request, a renamed folder, an edited header.
+- **Undo/redo** — `viewContext.undoManager` handed to the window. **Not as free as this section originally claimed:** Core Data groups undo registrations by event loop iteration, and repositories save on every mutation without closing a group, so one Cmd+Z reverts a whole batch. Verified in Phase 3 — a single delete followed by Cmd+Z took the tree from six rows to three. Correct undo needs explicit `begin`/`endUndoGrouping` around each repository mutation, and reverting only changes objects in memory so the undo notification must re-save and reload. Left unwired (Cmd+Z inert) until that work is scheduled.
 - **Accessibility mostly for free** — stock controls ship with correct VoiceOver roles and full keyboard access. The three custom views in §7.4 need explicit `NSAccessibility` work; nothing else should.
 - **Appearance for free** — source list, tab bar, toolbar, and segmented controls all handle Dark Mode, Increase Contrast, and accent color changes without app code.
 - **Services menu, Sharing, Quick Look** on response bodies.
@@ -486,7 +486,8 @@ fi
 - **Bundle identifier:** `com.perezstudio.Courier`. Keychain service: `com.perezstudio.Courier.secrets`. App group / support directory: `~/Library/Application Support/Courier/`.
 
 **Open — none of these block Phase 0:**
-1. **Distribution** — Developer ID direct download, or Mac App Store? Affects sandbox strictness and the update mechanism.
-2. **Bruno import** — an earlier plan included it. Still wanted, or are Postman + OpenAPI + curl enough for v1?
-3. **File-backed collections** — the long-term portability answer if you ever want collections in git or shared across machines. Worth designing the export format with that future in mind, or not a concern?
-4. **App icon** — the existing `AppIcon.icon` asset is the one thing worth salvaging from the current tree if you want it.
+1. **Undo/redo scheduling** — deferred out of Phase 3 for the reason in §7.5. Wire it as its own pass (explicit undo grouping per repository mutation, plus re-save and reload on the undo notification), or drop Cmd+Z from v1?
+2. **Distribution** — Developer ID direct download, or Mac App Store? Affects sandbox strictness and the update mechanism.
+3. **Bruno import** — an earlier plan included it. Still wanted, or are Postman + OpenAPI + curl enough for v1?
+4. **File-backed collections** — the long-term portability answer if you ever want collections in git or shared across machines. Worth designing the export format with that future in mind, or not a concern?
+5. **App icon** — the existing `AppIcon.icon` asset is the one thing worth salvaging from the current tree if you want it.

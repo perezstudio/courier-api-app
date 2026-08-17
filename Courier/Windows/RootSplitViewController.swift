@@ -51,6 +51,14 @@ final class RootSplitViewController: NSSplitViewController {
         contentViewController.showRequest(requestID)
     }
 
+    func createRequestAtSelection() {
+        sidebarViewController.createRequestAtSelection()
+    }
+
+    func createFolderAtSelection() {
+        sidebarViewController.createFolderAtSelection()
+    }
+
     func toggleSidebar() {
         toggleSidebar(nil)
     }

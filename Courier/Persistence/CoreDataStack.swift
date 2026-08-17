@@ -95,7 +95,10 @@ final class CoreDataStack {
         // row would otherwise fail the whole save. Property-level merge lets the
         // newer values win instead.
         context.mergePolicy = NSMergePolicy(merge: .mergeByPropertyObjectTrumpMergePolicyType)
-        context.undoManager = UndoManager()
+        // No undo manager: nothing consumes it yet, and an unused one records
+        // every change forever. Undo gets wired up with proper per-mutation
+        // grouping — see MainWindowController.windowWillReturnUndoManager.
+        context.undoManager = nil
     }
 
     // MARK: - Background work

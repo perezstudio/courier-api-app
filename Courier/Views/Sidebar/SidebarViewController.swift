@@ -1,28 +1,27 @@
 import AppKit
 
-/// Phase 2 sidebar.
-///
-/// Phase 3 replaces the body with the source-list `NSOutlineView`. What is here
-/// now exists to *verify the shared-state design*: every window has its own
-/// sidebar, and this one renders values owned by the app-wide
-/// `LibraryController`. Create a request in one tab and every other tab's
-/// sidebar updates — which is the behavior §11 flags as the top risk of using
-/// native window tabs.
+/// Workspace popup above the collection tree.
 @MainActor
 final class SidebarViewController: NSViewController {
 
     private let libraryController: LibraryController
     private unowned let registry: WindowRegistry
 
-    private let workspaceLabel = NSTextField(labelWithString: "")
-    private let countLabel = NSTextField(labelWithString: "")
-    private let filterLabel = NSTextField(labelWithString: "")
-    private let requestStack = NSStackView()
+    private let workspacePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let outlineController: CollectionOutlineViewController
     private var observation: ObservationToken?
+
+    /// Guards against the popup's own action firing while it is being
+    /// repopulated, which would reselect the workspace on every reload.
+    private var isPopulating = false
 
     init(libraryController: LibraryController, registry: WindowRegistry) {
         self.libraryController = libraryController
         self.registry = registry
+        self.outlineController = CollectionOutlineViewController(
+            libraryController: libraryController,
+            registry: registry
+        )
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -40,108 +39,94 @@ final class SidebarViewController: NSViewController {
         setupLayout()
 
         observation = libraryController.observe { [weak self] in
-            self?.reload()
+            self?.reloadWorkspaces()
         }
-        reload()
+        reloadWorkspaces()
     }
 
     private func setupLayout() {
-        workspaceLabel.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
-        countLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        countLabel.textColor = .secondaryLabelColor
-        filterLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        filterLabel.textColor = .tertiaryLabelColor
+        workspacePopUp.translatesAutoresizingMaskIntoConstraints = false
+        workspacePopUp.bezelStyle = .rounded
+        workspacePopUp.target = self
+        workspacePopUp.action = #selector(workspaceChanged(_:))
 
-        requestStack.orientation = .vertical
-        requestStack.alignment = .leading
-        requestStack.spacing = 2
+        addChild(outlineController)
+        let tree = outlineController.view
+        tree.translatesAutoresizingMaskIntoConstraints = false
 
-        let header = NSStackView(views: [workspaceLabel, countLabel, filterLabel])
-        header.orientation = .vertical
-        header.alignment = .leading
-        header.spacing = 2
+        view.addSubview(workspacePopUp)
+        view.addSubview(tree)
 
-        // A spacer that soaks up leftover height, so rows stay pinned to the top.
-        let spacer = NSView()
-        spacer.setContentHuggingPriority(.defaultLow, for: .vertical)
-
-        let root = NSStackView(views: [header, requestStack, spacer])
-        root.orientation = .vertical
-        root.alignment = .leading
-        root.spacing = Theme.Metrics.tightPadding
-        root.translatesAutoresizingMaskIntoConstraints = false
-        root.edgeInsets = NSEdgeInsets(
-            top: Theme.Metrics.tightPadding,
-            left: Theme.Metrics.standardPadding,
-            bottom: Theme.Metrics.tightPadding,
-            right: Theme.Metrics.standardPadding
-        )
-
-        view.addSubview(root)
-
-        // Pinned to the safe area, not the view: the sidebar runs full height
-        // under the titlebar, so view.topAnchor puts content beneath the
-        // traffic lights.
+        // Pinned to the safe area: the sidebar runs full height under the
+        // titlebar, so view.topAnchor would put the popup behind the traffic
+        // lights.
         let safe = view.safeAreaLayoutGuide
         NSLayoutConstraint.activate([
-            root.topAnchor.constraint(equalTo: safe.topAnchor),
-            root.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            root.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            root.bottomAnchor.constraint(equalTo: safe.bottomAnchor),
+            workspacePopUp.topAnchor.constraint(
+                equalTo: safe.topAnchor,
+                constant: Theme.Metrics.tightPadding
+            ),
+            workspacePopUp.leadingAnchor.constraint(
+                equalTo: view.leadingAnchor,
+                constant: Theme.Metrics.tightPadding
+            ),
+            workspacePopUp.trailingAnchor.constraint(
+                equalTo: view.trailingAnchor,
+                constant: -Theme.Metrics.tightPadding
+            ),
+
+            tree.topAnchor.constraint(
+                equalTo: workspacePopUp.bottomAnchor,
+                constant: Theme.Metrics.tightPadding
+            ),
+            tree.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tree.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            tree.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
     }
 
-    // MARK: - Rendering
+    // MARK: - Creation
+    //
+    // Forwarded from the File menu so menu and context-menu creation share one
+    // insertion rule.
 
-    private func reload() {
-        workspaceLabel.stringValue = libraryController.activeWorkspace?.name ?? "No Workspace"
-
-        let count = libraryController.activeWorkspace?.requestCount ?? 0
-        countLabel.stringValue = count == 1 ? "1 request" : "\(count) requests"
-
-        let filter = libraryController.filterText
-        filterLabel.stringValue = filter.isEmpty ? "" : "Filter: \(filter)"
-        filterLabel.isHidden = filter.isEmpty
-
-        renderRequests()
+    func createRequestAtSelection() {
+        outlineController.createRequestAtSelection()
     }
 
-    private func renderRequests() {
-        for subview in requestStack.arrangedSubviews {
-            requestStack.removeArrangedSubview(subview)
-            subview.removeFromSuperview()
+    func createFolderAtSelection() {
+        outlineController.createFolderAtSelection()
+    }
+
+    // MARK: - Workspaces
+
+    private func reloadWorkspaces() {
+        isPopulating = true
+        defer { isPopulating = false }
+
+        workspacePopUp.removeAllItems()
+        for workspace in libraryController.workspaces {
+            let title = workspace.requestCount == 1
+                ? "\(workspace.name) — 1 request"
+                : "\(workspace.name) — \(workspace.requestCount) requests"
+            workspacePopUp.addItem(withTitle: title)
+            workspacePopUp.lastItem?.representedObject = workspace.id
+            workspacePopUp.lastItem?.image = NSImage(
+                systemSymbolName: workspace.iconSymbolName,
+                accessibilityDescription: nil
+            )
         }
 
-        let filter = libraryController.filterText.lowercased()
-        for node in libraryController.tree {
-            guard case .request(let request) = node else { continue }
-            if !filter.isEmpty, !request.name.lowercased().contains(filter) { continue }
-            requestStack.addArrangedSubview(makeRow(for: request))
+        if let activeID = libraryController.activeWorkspaceID,
+           let index = libraryController.workspaces.firstIndex(where: { $0.id == activeID }) {
+            workspacePopUp.selectItem(at: index)
         }
     }
 
-    private func makeRow(for request: RequestSummary) -> NSView {
-        let button = NSButton(title: "\(request.method)  \(request.name)", target: self, action: #selector(rowClicked(_:)))
-        button.bezelStyle = .inline
-        button.isBordered = false
-        button.alignment = .left
-        button.contentTintColor = Theme.color(forMethod: request.method)
-        button.identifier = NSUserInterfaceItemIdentifier(request.id.uuidString)
-        return button
-    }
-
-    @objc private func rowClicked(_ sender: NSButton) {
-        guard
-            let raw = sender.identifier?.rawValue,
-            let id = UUID(uuidString: raw)
+    @objc private func workspaceChanged(_ sender: NSPopUpButton) {
+        guard !isPopulating,
+              let id = sender.selectedItem?.representedObject as? UUID
         else { return }
-
-        // Finder/Safari behavior: plain click navigates this tab, Command-click
-        // opens a new one. See REQUIREMENTS.md §7.2.
-        if NSEvent.modifierFlags.contains(.command) {
-            registry.openInNewTab(requestID: id)
-        } else {
-            registry.navigateCurrentTab(to: id)
-        }
+        libraryController.setActiveWorkspace(id)
     }
 }

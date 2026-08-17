@@ -65,7 +65,7 @@ final class MainToolbarDelegate: NSObject, NSToolbarDelegate {
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
             item.label = "New Request"
             item.paletteLabel = "New Request"
-            item.toolTip = "New request in a new tab"
+            item.toolTip = "New request"
             item.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "New request")
             item.isBordered = true
             item.target = self

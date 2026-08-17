@@ -68,7 +68,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private func configureToolbar(_ window: NSWindow) {
         let delegate = MainToolbarDelegate(
             splitView: rootSplit.splitView,
-            onNewRequest: { [weak self] in self?.newRequestInNewTab() },
+            onNewRequest: { [weak self] in self?.rootSplit.createRequestAtSelection() },
             onFilterChange: { [weak self] text in self?.applyFilter(text) }
         )
         self.toolbarDelegate = delegate
@@ -113,12 +113,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     // MARK: - Actions
 
-    private func newRequestInNewTab() {
-        guard let summary = libraryController.createRequest() else { return }
-        registry.forEachController { $0.refreshTitles() }
-        registry.openInNewTab(requestID: summary.id)
-    }
-
     private func applyFilter(_ text: String) {
         libraryController.filterText = text
     }
@@ -129,11 +123,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     // nil target reach these on the frontmost window.
 
     @objc func newRequest(_ sender: Any?) {
-        newRequestInNewTab()
+        rootSplit.createRequestAtSelection()
     }
 
     @objc func newFolder(_ sender: Any?) {
-        libraryController.createFolder()
+        rootSplit.createFolderAtSelection()
     }
 
     @objc func newTab(_ sender: Any?) {
@@ -160,5 +154,20 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     func windowWillClose(_ notification: Notification) {
         registry.controllerWillClose(self)
+    }
+
+    /// Returns nil: **undo is not implemented yet**, so Cmd+Z is inert rather
+    /// than dangerous.
+    ///
+    /// Handing the window `viewContext.undoManager` looks like it should work —
+    /// REQUIREMENTS.md §7.5 lists undo as a free native win — but Core Data
+    /// groups undo registrations by event loop iteration, and repositories save
+    /// on every mutation without closing a group. In testing, one Cmd+Z after a
+    /// single delete reverted several unrelated operations (the tree went from
+    /// six rows to three). Correct undo needs explicit
+    /// begin/endUndoGrouping around each repository mutation, which is its own
+    /// piece of work. A destructive Cmd+Z is worse than none.
+    func windowWillReturnUndoManager(_ window: NSWindow) -> UndoManager? {
+        libraryController.undoManager
     }
 }

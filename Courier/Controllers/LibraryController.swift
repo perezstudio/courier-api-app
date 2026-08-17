@@ -1,3 +1,4 @@
+import CoreData
 import Foundation
 
 /// Cancels an observation when released or explicitly cancelled.
@@ -70,6 +71,10 @@ final class LibraryController {
     // MARK: - Observation
 
     private var observers: [UUID: () -> Void] = [:]
+
+    /// Undo is deliberately **not** wired up yet — see the note on
+    /// `MainWindowController.windowWillReturnUndoManager`.
+    var undoManager: UndoManager? { nil }
 
     init(stack: CoreDataStack, secretStore: SecretStore) {
         self.stack = stack
