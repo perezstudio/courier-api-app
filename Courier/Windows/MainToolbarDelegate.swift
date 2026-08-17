@@ -40,6 +40,7 @@ final class MainToolbarDelegate: NSObject, NSToolbarDelegate {
     private weak var statusItem: NSToolbarItem?
     private var itemCache: [NSToolbarItem.Identifier: NSToolbarItem] = [:]
     private var currentStatus: ResponseStatus?
+    private var currentMode = ResponseViewController.Mode.results
     private var isResultsCollapsed = false
     private weak var responseModeControl: NSSegmentedControl?
     weak var toolbar: NSToolbar?
@@ -90,13 +91,22 @@ final class MainToolbarDelegate: NSObject, NSToolbarDelegate {
             // No divider to track and no region to fill; just the toggle.
             identifiers.append(.flexibleSpace)
         } else {
+            // The status chip and the section group are always present and
+            // hidden when they have nothing to show, rather than added and
+            // removed as state changes.
+            //
+            // This is not a style preference. Changing the item set runs
+            // `rebuildResultsRegion`, which removes and re-inserts every item,
+            // and that teardown destroys the toolbar's material to the right of
+            // the tracking separator: the response body was left showing
+            // straight through the toolbar. Since a chip appearing was the only
+            // thing that changed the list on a send, sending a request was
+            // enough to break the toolbar every time.
             identifiers.append(ItemID.contentSeparator)
-            if currentStatus != nil { identifiers.append(ItemID.responseStatus) }
+            identifiers.append(ItemID.responseStatus)
             identifiers.append(ItemID.responseMode)
             identifiers.append(.flexibleSpace)
-            if responseModeControl?.selectedSegment == ResponseViewController.Mode.results.rawValue {
-                identifiers.append(ItemID.resultsSection)
-            }
+            identifiers.append(ItemID.resultsSection)
         }
         identifiers.append(ItemID.toggleInspector)
         return identifiers
@@ -277,6 +287,7 @@ final class MainToolbarDelegate: NSObject, NSToolbarDelegate {
             item.autovalidates = false
             item.isEnabled = true
             item.menu = NSMenu()
+            item.isHidden = currentStatus == nil
             statusItem = item
             if let status = currentStatus { apply(status) }
             return item
@@ -335,6 +346,7 @@ final class MainToolbarDelegate: NSObject, NSToolbarDelegate {
             group.isBordered = true
             group.setSelected(true, at: 0)
             resultsSectionGroup = group
+            group.isHidden = currentMode != .results
             return group
 
         case ItemID.toggleInspector:
@@ -408,10 +420,15 @@ final class MainToolbarDelegate: NSObject, NSToolbarDelegate {
 
     /// Reconciles the toolbar against `currentIdentifiers()`.
     ///
-    /// Items that come and go — separator, status chip, mode picker, section
-    /// group — are handled by recomputing the whole list rather than by
-    /// case-by-case inserts, which previously produced a negative index and a
-    /// separator that stranded the toggle in the overflow menu.
+    /// Recomputes the whole list rather than doing case-by-case inserts, which
+    /// previously produced a negative index and a separator that stranded the
+    /// toggle in the overflow menu.
+    ///
+    /// Called only when the results pane collapses or expands, because it is
+    /// destructive: removing and re-inserting every item takes the toolbar's
+    /// material with it in the region past the tracking separator. Anything
+    /// that merely comes and goes with state — the status chip, the section
+    /// group — stays in the list permanently and toggles `isHidden` instead.
     private func rebuildResultsRegion() {
         guard let toolbar else { return }
 
@@ -427,15 +444,21 @@ final class MainToolbarDelegate: NSObject, NSToolbarDelegate {
     }
 
     func setResponseMode(_ mode: ResponseViewController.Mode) {
+        currentMode = mode
         responseModeControl?.selectedSegment = mode.rawValue
-        rebuildResultsRegion()
+        applySectionVisibility()
     }
 
-    /// `nil` removes the chip from the toolbar entirely.
+    /// The Body/Headers/Cookies group belongs to the results mode only.
+    private func applySectionVisibility() {
+        resultsSectionGroup?.isHidden = currentMode != .results
+    }
+
+    /// `nil` hides the chip. It is never removed — see `currentIdentifiers()`.
     func setStatus(_ status: ResponseStatus?) {
         currentStatus = status
         if let status { apply(status) }
-        rebuildResultsRegion()
+        statusItem?.isHidden = status == nil
     }
 
     private func apply(_ status: ResponseStatus) {
@@ -512,7 +535,8 @@ final class MainToolbarDelegate: NSObject, NSToolbarDelegate {
 
     @objc private func responseModeChanged(_ sender: NSSegmentedControl) {
         guard let mode = ResponseViewController.Mode(rawValue: sender.selectedSegment) else { return }
-        rebuildResultsRegion()
+        currentMode = mode
+        applySectionVisibility()
         callbacks.responseModeChange(mode)
     }
 

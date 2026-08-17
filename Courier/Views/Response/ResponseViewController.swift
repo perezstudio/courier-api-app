@@ -68,14 +68,16 @@ final class ResponseViewController: NSViewController {
         container.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(container)
         NSLayoutConstraint.activate([
-            // Deliberately the view's own top, not the safe-area guide: under a
-            // unified toolbar the scroll views are meant to run *underneath* it.
-            // Their `automaticallyAdjustsContentInsets` keeps the text itself
-            // clear of the toolbar, while the overlap is what makes AppKit draw
-            // the titlebar separator and the glass edge. Pinning to the safe
-            // area instead leaves nothing under the toolbar, and the separator
-            // never appears no matter what `titlebarSeparatorStyle` asks for.
-            container.topAnchor.constraint(equalTo: view.topAnchor),
+            // The safe-area guide, so nothing is drawn behind the toolbar.
+            //
+            // Pinning to the view's own top was tried, to let the scroll views
+            // underlap the way a unified toolbar expects and so coax AppKit
+            // into drawing the titlebar separator. It did not produce the
+            // separator, and it cost the toolbar its backdrop: an opaque scroll
+            // view painting into the titlebar region left the toolbar's
+            // material undrawn until a mouse-over forced it to re-composite,
+            // so the background only appeared on hover.
+            container.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             container.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             container.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             container.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -101,14 +103,8 @@ final class ResponseViewController: NSViewController {
 
         child.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(child)
-        // Only scroll-backed modes may underlap the toolbar. The timeline is a
-        // plain chart with no content inset of its own, so it is held to the
-        // safe area or its top bar would slide beneath the toolbar.
-        let top = mode == .timeline
-            ? container.safeAreaLayoutGuide.topAnchor
-            : container.topAnchor
         NSLayoutConstraint.activate([
-            child.topAnchor.constraint(equalTo: top),
+            child.topAnchor.constraint(equalTo: container.topAnchor),
             child.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             child.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             child.bottomAnchor.constraint(equalTo: container.bottomAnchor),
