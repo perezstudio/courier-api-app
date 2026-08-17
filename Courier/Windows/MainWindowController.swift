@@ -31,6 +31,15 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1_200, height: 760),
+            // .fullSizeContentView is what makes the toolbar *unified* — it
+            // lets the sidebar's material rise into the titlebar so the toolbar
+            // reads as three regions rather than one flat bar. Dropping it does
+            // produce a solid toolbar, but a uniform one, which is not what
+            // this window wants.
+            //
+            // Keeping it means nothing may draw in the titlebar's territory.
+            // Each column is held to the safe area for that reason, and the
+            // code ruler is clipped to its bounds — see CodeTextView.
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -102,9 +111,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
         window.toolbar = toolbar
         window.toolbarStyle = .unified
-        // Held explicitly: with .fullSizeContentView the automatic style drops
-        // the divider depending on what sits under the toolbar, so it
-        // disappeared as soon as a response was showing.
         window.titlebarSeparatorStyle = .line
         // Hidden, like Mail and Safari. A visible title *plus* subtitle renders
         // as a two-line block that both inflates the toolbar's height and eats

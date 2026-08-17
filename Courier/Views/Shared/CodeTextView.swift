@@ -70,7 +70,16 @@ final class CodeTextView: NSView {
         scrollView.backgroundColor = .textBackgroundColor
         scrollView.translatesAutoresizingMaskIntoConstraints = false
 
+        // Clipped explicitly. AppKit views do not clip their drawing to their
+        // bounds, and NSRulerView strokes its border past the top of its frame:
+        // the line ran the full height of the window, straight through the
+        // toolbar and behind the status chip. The ruler's frame was correct all
+        // along — measured at exactly the toolbar's height below the window
+        // top — so nothing about the layout was what needed fixing.
+        scrollView.clipsToBounds = true
+
         let ruler = LineNumberRulerView(textView: textView)
+        ruler.clipsToBounds = true
         scrollView.verticalRulerView = ruler
         scrollView.hasVerticalRuler = true
         scrollView.rulersVisible = true

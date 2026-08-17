@@ -96,7 +96,9 @@ final class RootSplitViewController: NSSplitViewController {
         // Wrapped for the same reason as the settings column: with
         // .fullSizeContentView the pane runs under the toolbar, and the code
         // view's line-number ruler drew on top of it.
-        resultsItem = NSSplitViewItem(viewController: session.responseSections)
+        resultsItem = NSSplitViewItem(
+            viewController: SafeAreaContainerViewController(child: session.responseSections)
+        )
         resultsItem.minimumThickness = Theme.Metrics.resultsMinWidth
         resultsItem.canCollapse = true
         // Same holding priority as the settings column. With results held
