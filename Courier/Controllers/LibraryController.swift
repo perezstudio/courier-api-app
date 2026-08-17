@@ -161,6 +161,21 @@ final class LibraryController {
         activeWorkspaceID = id
     }
 
+    /// The tree for one specific workspace, rather than whichever is active.
+    ///
+    /// The sidebar's pager shows every workspace at once — a page whose content
+    /// only appeared once it became active would slide in empty.
+    func tree(forWorkspace id: UUID) -> [TreeNode] {
+        (try? library.tree(forWorkspace: id)) ?? []
+    }
+
+    @discardableResult
+    func createWorkspace(name: String) -> WorkspaceSnapshot? {
+        guard let snapshot = try? library.createWorkspace(name: name) else { return nil }
+        reloadAll()
+        return snapshot
+    }
+
     // MARK: - Expansion
 
     func isExpanded(_ folderID: UUID) -> Bool {

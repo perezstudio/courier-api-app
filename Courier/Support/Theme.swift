@@ -13,8 +13,10 @@ enum Theme {
         // hold their width, and the middle column is the flexible one. The
         // reverse — a capped middle column — means dragging to widen the
         // settings hits its ceiling immediately and moves the sidebar instead.
-        static let sidebarMinWidth: CGFloat = 200
-        static let sidebarMaxWidth: CGFloat = 350
+        // Fixed rather than a range: the sidebar is not meant to be dragged,
+        // so equal bounds are what pin it there.
+        static let sidebarMinWidth: CGFloat = 260
+        static let sidebarMaxWidth: CGFloat = 260
 
         /// Middle column — request settings. Deliberately has no maximum.
         static let settingsMinWidth: CGFloat = 400

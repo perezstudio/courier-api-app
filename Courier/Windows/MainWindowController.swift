@@ -62,7 +62,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
     private func configureWindow(_ window: NSWindow) {
         window.contentViewController = rootSplit
         window.delegate = self
-        window.minSize = NSSize(width: 900, height: 500)
+        // Wide enough for all three columns at their minimums — 260 + 400 + 350.
+        // At 900 the window could be narrowed past what the columns can honour,
+        // leaving AppKit to violate one of them.
+        window.minSize = NSSize(width: 1_020, height: 500)
 
         // Native window tabs. `tabbingMode = .preferred` means new windows
         // prefer to become tabs; the shared identifier makes them eligible.

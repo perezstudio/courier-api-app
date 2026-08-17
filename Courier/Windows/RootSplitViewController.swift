@@ -86,10 +86,10 @@ final class RootSplitViewController: NSSplitViewController {
         )
         settingsItem.minimumThickness = Theme.Metrics.settingsMinWidth
         settingsItem.holdingPriority = .defaultLow
-        // Settings and results start equal, expressed as fractions. Setting the
-        // divider by hand after the view appeared did not work: it runs before
-        // the window reaches its final size, so the arithmetic was against the
-        // wrong width. AppKit applies these at the right point in layout.
+        // Settings and results start evenly split. Setting the divider by hand
+        // after the view appeared did not work: it runs before the window
+        // reaches its final size, so the arithmetic was against the wrong
+        // width. AppKit applies these at the right point in layout.
         settingsItem.preferredThicknessFraction = 0.4
         settingsItem.titlebarSeparatorStyle = .line
         addSplitViewItem(settingsItem)
@@ -115,9 +115,7 @@ final class RootSplitViewController: NSSplitViewController {
         resultsItem.titlebarSeparatorStyle = .line
         addSplitViewItem(resultsItem)
 
-        // Renamed again: a restored width from the inspector-item era would
-        // otherwise win over the preferred fractions above.
-        splitView.autosaveName = "CourierColumns2"
+        splitView.autosaveName = "CourierColumns4"
     }
 
     // MARK: - Content

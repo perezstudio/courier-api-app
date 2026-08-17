@@ -16,8 +16,16 @@ final class CollectionOutlineViewController: NSViewController {
     private let libraryController: LibraryController
     private unowned let registry: WindowRegistry
 
+    /// The workspace this tree renders, fixed for the controller's lifetime.
+    ///
+    /// Not "whichever workspace is active": the sidebar builds one of these per
+    /// workspace and shows them side by side, so a page bound to the active
+    /// workspace would render the same content as every other page.
+    let workspaceID: UUID
+
     private let outlineView = SidebarOutlineView()
-    private let scrollView = NSScrollView()
+    /// Forwards horizontal swipes to the workspace pager; see the class note.
+    private let scrollView = PagingAwareScrollView()
     private let emptyLabel = NSTextField(labelWithString: "No requests")
 
     private var roots: [SidebarNode] = []
@@ -27,10 +35,18 @@ final class CollectionOutlineViewController: NSViewController {
     /// restoring state doesn't write it straight back to the store.
     private var isRestoring = false
 
-    init(libraryController: LibraryController, registry: WindowRegistry) {
+    init(libraryController: LibraryController, workspaceID: UUID, registry: WindowRegistry) {
         self.libraryController = libraryController
+        self.workspaceID = workspaceID
         self.registry = registry
         super.init(nibName: nil, bundle: nil)
+    }
+
+    /// Points this page's list at the pager, so a horizontal swipe that starts
+    /// over the list still turns the page.
+    func attachPager(_ pager: NSScrollView) {
+        loadViewIfNeeded()
+        scrollView.pager = pager
     }
 
     @available(*, unavailable)
@@ -78,7 +94,10 @@ final class CollectionOutlineViewController: NSViewController {
         outlineView.setDraggingSourceOperationMask(.move, forLocal: true)
 
         scrollView.documentView = outlineView
-        scrollView.hasVerticalScroller = true
+        // No scroller, matching Admiral's sidebar lists. A source list is
+        // short enough to scan by dragging, and the bar sat permanently over
+        // the rightmost few points of every row.
+        scrollView.hasVerticalScroller = false
         scrollView.drawsBackground = false
         scrollView.automaticallyAdjustsContentInsets = true
     }
@@ -110,7 +129,7 @@ final class CollectionOutlineViewController: NSViewController {
         let selectedIDs = selectedNodeIDs()
 
         roots = SidebarNode.build(
-            from: libraryController.tree,
+            from: libraryController.tree(forWorkspace: workspaceID),
             filter: libraryController.filterText
         )
 
@@ -170,7 +189,9 @@ final class CollectionOutlineViewController: NSViewController {
 
     /// The parent a new item should be created in, given what's selected.
     private func insertionParent() -> TreeParent? {
-        guard let workspaceID = libraryController.activeWorkspaceID else { return nil }
+        // This page's workspace, not the active one. They agree while the page
+        // is the visible one, but binding to the page keeps a create or a drop
+        // landing in the tree the user is actually looking at.
         guard let node = focusedNode else { return .workspaceRoot(workspaceID) }
 
         // Creating while a folder is selected puts the item inside it; while a
@@ -244,10 +265,7 @@ extension CollectionOutlineViewController: NSOutlineViewDataSource {
         item: Any?,
         childIndex index: Int
     ) -> Bool {
-        guard
-            let draggedID = draggedNodeID(from: info),
-            let workspaceID = libraryController.activeWorkspaceID
-        else { return false }
+        guard let draggedID = draggedNodeID(from: info) else { return false }
 
         let destination: TreeParent
         if let target = item as? SidebarNode, target.isFolder {
