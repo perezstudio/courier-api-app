@@ -6,10 +6,20 @@ import AppKit
 @MainActor
 final class EditorResponseSplitViewController: NSSplitViewController {
 
-    private let editorViewController = RequestSectionsTabViewController()
+    private let editorViewController: NSViewController
     private let responseViewController = ResponseSectionsTabViewController()
 
     private var responseItem: NSSplitViewItem!
+
+    init(editor: NSViewController) {
+        self.editorViewController = editor
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()

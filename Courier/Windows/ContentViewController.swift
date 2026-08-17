@@ -7,15 +7,24 @@ import AppKit
 final class ContentViewController: NSViewController {
 
     private let libraryController: LibraryController
-    private let urlBarPlaceholder = NSView()
+    private let editorController: EditorController
+
+    private let urlBar = URLBarViewController()
     private let editorResponseSplit: EditorResponseSplitViewController
+    private let sections: RequestSectionsTabViewController
     private let emptyState: EmptyStateView
 
     private var requestID: UUID?
 
-    init(libraryController: LibraryController) {
+    init(libraryController: LibraryController, secretStore: SecretStore) {
         self.libraryController = libraryController
-        self.editorResponseSplit = EditorResponseSplitViewController()
+        let editorController = EditorController(
+            libraryController: libraryController,
+            secretStore: secretStore
+        )
+        self.editorController = editorController
+        self.sections = RequestSectionsTabViewController(editorController: editorController)
+        self.editorResponseSplit = EditorResponseSplitViewController(editor: sections)
         self.emptyState = EmptyStateView(
             symbolName: "square.on.square.dashed",
             title: "No Request Open",
@@ -38,35 +47,25 @@ final class ContentViewController: NSViewController {
         setupURLBar()
         setupSplit()
         setupEmptyState()
+        wireCallbacks()
         updateVisibility()
     }
 
     // MARK: - Setup
 
     private func setupURLBar() {
-        // Phase 4 replaces this with the real URL bar: method popup, URL field
-        // with {{variable}} highlighting, and the Send button.
-        urlBarPlaceholder.wantsLayer = true
-        urlBarPlaceholder.translatesAutoresizingMaskIntoConstraints = false
+        addChild(urlBar)
+        let bar = urlBar.view
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(bar)
 
-        let separator = NSBox()
-        separator.boxType = .separator
-        separator.translatesAutoresizingMaskIntoConstraints = false
-
-        view.addSubview(urlBarPlaceholder)
-        urlBarPlaceholder.addSubview(separator)
-
-        // Safe area, not the view: the content pane also runs under the
-        // titlebar when the toolbar is unified.
+        // Safe area, not the view: the content pane runs under the titlebar
+        // when the toolbar is unified.
         NSLayoutConstraint.activate([
-            urlBarPlaceholder.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
-            urlBarPlaceholder.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            urlBarPlaceholder.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            urlBarPlaceholder.heightAnchor.constraint(equalToConstant: Theme.Metrics.urlBarHeight),
-
-            separator.leadingAnchor.constraint(equalTo: urlBarPlaceholder.leadingAnchor),
-            separator.trailingAnchor.constraint(equalTo: urlBarPlaceholder.trailingAnchor),
-            separator.bottomAnchor.constraint(equalTo: urlBarPlaceholder.bottomAnchor),
+            bar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            bar.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            bar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            bar.heightAnchor.constraint(equalToConstant: Theme.Metrics.urlBarHeight),
         ])
     }
 
@@ -77,7 +76,7 @@ final class ContentViewController: NSViewController {
         view.addSubview(splitView)
 
         NSLayoutConstraint.activate([
-            splitView.topAnchor.constraint(equalTo: urlBarPlaceholder.bottomAnchor),
+            splitView.topAnchor.constraint(equalTo: urlBar.view.bottomAnchor),
             splitView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             splitView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             splitView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
@@ -95,21 +94,58 @@ final class ContentViewController: NSViewController {
         ])
     }
 
+    private func wireCallbacks() {
+        urlBar.onMethodChange = { [weak self] method in
+            self?.editorController.setMethod(method)
+        }
+        urlBar.onURLChange = { [weak self] url in
+            guard let self else { return }
+            self.editorController.setURL(url)
+            // Typing in the URL rewrites the params table, but not the URL
+            // field itself — reloading it would fight the insertion point.
+            self.sections.refreshParams()
+        }
+        urlBar.onSend = { [weak self] in
+            self?.sendRequest()
+        }
+
+        editorController.onChange = { [weak self] in
+            self?.sections.refreshDerived()
+        }
+    }
+
     // MARK: - Content
 
     func showRequest(_ requestID: UUID?) {
         self.requestID = requestID
+        editorController.load(requestID: requestID)
+
+        if requestID != nil {
+            urlBar.configure(method: editorController.method, url: editorController.url)
+            sections.reload()
+        }
         updateVisibility()
+    }
+
+    /// Writes any debounced edit immediately — called when the window is
+    /// closing or the request is changing out from under the editor.
+    func flushPendingEdits() {
+        editorController.flushPendingSave()
     }
 
     private func updateVisibility() {
         let hasRequest = requestID != nil
         emptyState.isHidden = hasRequest
-        urlBarPlaceholder.isHidden = !hasRequest
+        urlBar.view.isHidden = !hasRequest
         editorResponseSplit.view.isHidden = !hasRequest
     }
 
     func toggleResponsePane() {
         editorResponseSplit.toggleResponsePane()
+    }
+
+    private func sendRequest() {
+        // Phase 5 wires this to RequestExecutor.
+        NSSound.beep()
     }
 }

@@ -4,7 +4,7 @@ import Foundation
 // Persistence/ — they are not Sendable, and keeping them out of the UI layer is
 // what makes that layer testable. See REQUIREMENTS.md §3.1.
 
-struct WorkspaceSnapshot: Sendable, Identifiable, Hashable {
+nonisolated struct WorkspaceSnapshot: Sendable, Identifiable, Hashable {
     let id: UUID
     let name: String
     let sortOrder: Int
@@ -14,7 +14,7 @@ struct WorkspaceSnapshot: Sendable, Identifiable, Hashable {
 }
 
 /// One node in the collection tree. Folders carry children; requests are leaves.
-enum TreeNode: Sendable, Identifiable, Hashable {
+nonisolated enum TreeNode: Sendable, Identifiable, Hashable {
     case folder(FolderSnapshot)
     case request(RequestSummary)
 
@@ -40,7 +40,7 @@ enum TreeNode: Sendable, Identifiable, Hashable {
     }
 }
 
-struct FolderSnapshot: Sendable, Identifiable, Hashable {
+nonisolated struct FolderSnapshot: Sendable, Identifiable, Hashable {
     let id: UUID
     let name: String
     let sortOrder: Int
@@ -49,7 +49,7 @@ struct FolderSnapshot: Sendable, Identifiable, Hashable {
 }
 
 /// The lightweight form used for sidebar rows and tab titles.
-struct RequestSummary: Sendable, Identifiable, Hashable {
+nonisolated struct RequestSummary: Sendable, Identifiable, Hashable {
     let id: UUID
     let name: String
     let method: String
@@ -57,7 +57,7 @@ struct RequestSummary: Sendable, Identifiable, Hashable {
 }
 
 /// The full request, loaded when a tab opens.
-struct RequestDetail: Sendable, Identifiable, Hashable {
+nonisolated struct RequestDetail: Sendable, Identifiable, Hashable {
     let id: UUID
     let name: String
     let method: String
@@ -73,7 +73,7 @@ struct RequestDetail: Sendable, Identifiable, Hashable {
     let queryParams: [KeyValueRow]
 }
 
-struct KeyValueRow: Sendable, Identifiable, Hashable {
+nonisolated struct KeyValueRow: Sendable, Identifiable, Hashable {
     let id: UUID
     var key: String
     var value: String
@@ -89,14 +89,14 @@ struct KeyValueRow: Sendable, Identifiable, Hashable {
     }
 }
 
-struct EnvironmentSnapshot: Sendable, Identifiable, Hashable {
+nonisolated struct EnvironmentSnapshot: Sendable, Identifiable, Hashable {
     let id: UUID
     let name: String
     let sortOrder: Int
     let variables: [VariableSnapshot]
 }
 
-struct VariableSnapshot: Sendable, Identifiable, Hashable {
+nonisolated struct VariableSnapshot: Sendable, Identifiable, Hashable {
     let id: UUID
     let key: String
     /// Empty for secrets — the value is fetched from the Keychain on demand so
@@ -107,7 +107,7 @@ struct VariableSnapshot: Sendable, Identifiable, Hashable {
     let sortOrder: Int
 }
 
-struct RunSummary: Sendable, Identifiable, Hashable {
+nonisolated struct RunSummary: Sendable, Identifiable, Hashable {
     let id: UUID
     let requestID: UUID?
     let status: RunStatus
@@ -123,7 +123,7 @@ struct RunSummary: Sendable, Identifiable, Hashable {
 }
 
 /// Where a folder or request sits in the tree. Used by move/reparent.
-enum TreeParent: Sendable, Hashable {
+nonisolated enum TreeParent: Sendable, Hashable {
     case workspaceRoot(UUID)
     case folder(UUID)
 }

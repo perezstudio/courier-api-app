@@ -41,6 +41,9 @@ final class ObservationToken {
 final class LibraryController {
 
     private let stack: CoreDataStack
+    /// Exposed so editors can read and write auth secrets without a second
+    /// dependency-injection path down through the view controllers.
+    let secretStore: SecretStore
     let library: LibraryRepository
     let requests: RequestRepository
     let environments: EnvironmentRepository
@@ -78,6 +81,7 @@ final class LibraryController {
 
     init(stack: CoreDataStack, secretStore: SecretStore) {
         self.stack = stack
+        self.secretStore = secretStore
         library = LibraryRepository(context: stack.viewContext)
         requests = RequestRepository(context: stack.viewContext)
         environments = EnvironmentRepository(context: stack.viewContext, secretStore: secretStore)

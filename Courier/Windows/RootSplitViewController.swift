@@ -22,7 +22,10 @@ final class RootSplitViewController: NSSplitViewController {
             libraryController: libraryController,
             registry: registry
         )
-        self.contentViewController = ContentViewController(libraryController: libraryController)
+        self.contentViewController = ContentViewController(
+            libraryController: libraryController,
+            secretStore: libraryController.secretStore
+        )
         super.init(nibName: nil, bundle: nil)
     }
 
