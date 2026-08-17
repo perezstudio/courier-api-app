@@ -38,7 +38,6 @@ final class MainToolbarDelegate: NSObject, NSToolbarDelegate {
     private weak var inspectorItem: NSToolbarItem?
     private weak var resultsSectionGroup: NSToolbarItemGroup?
     private weak var statusItem: NSToolbarItem?
-    private weak var statusButton: NSButton?
     private var itemCache: [NSToolbarItem.Identifier: NSToolbarItem] = [:]
     private var currentStatus: ResponseStatus?
     private var isResultsCollapsed = false
@@ -260,17 +259,24 @@ final class MainToolbarDelegate: NSObject, NSToolbarDelegate {
             return item
 
         case ItemID.responseStatus:
-            // An NSButton rather than a title-only NSToolbarItem: the toolbar
-            // runs in `.iconOnly` display mode, where an item carrying only a
-            // title draws as bare text with no button chrome at all.
-            let button = NSButton(title: "", target: nil, action: nil)
-            button.bezelStyle = .push
-            statusButton = button
-
-            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
+            // The same class as the method picker, with its chevron suppressed.
+            // That is what makes the two chips match exactly: only a real
+            // toolbar control takes `style = .prominent`, and the toolbar runs
+            // in `.iconOnly`, where a plain NSToolbarItem carrying just a title
+            // draws nothing at all. A hosted NSButton renders, but cannot take
+            // the prominent treatment — its title had to be coloured by hand.
+            //
+            // The menu is empty and validation is off: the chip reports status
+            // and has nothing to invoke, and an autovalidating item with no
+            // target dims itself.
+            let item = NSMenuToolbarItem(itemIdentifier: itemIdentifier)
             item.label = "Status"
             item.paletteLabel = "Response Status"
-            item.view = button
+            item.showsIndicator = false
+            item.isBordered = true
+            item.autovalidates = false
+            item.isEnabled = true
+            item.menu = NSMenu()
             statusItem = item
             if let status = currentStatus { apply(status) }
             return item
@@ -433,27 +439,16 @@ final class MainToolbarDelegate: NSObject, NSToolbarDelegate {
     }
 
     private func apply(_ status: ResponseStatus) {
-        guard let button = statusButton else { return }
+        guard let item = statusItem else { return }
 
-        // `contentTintColor` only tints template images, so it left the title
-        // in the default label colour. An attributed title is what actually
-        // colours the text.
-        button.attributedTitle = NSAttributedString(
-            string: status.title,
-            attributes: [
-                .foregroundColor: status.color,
-                .font: NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold),
-            ]
-        )
-
-        // Sized to the title rather than to a fixed width, which left a short
-        // code like "200" floating in a much wider box.
-        button.sizeToFit()
-        let size = NSSize(width: max(44, ceil(button.frame.width)), height: 24)
-        button.setFrameSize(size)
-        statusItem?.minSize = size
-        statusItem?.maxSize = size
-        statusItem?.toolTip = "Response status \(status.title)"
+        // The same treatment the method picker gets: the system's prominent
+        // (Liquid Glass) style tinted by the status class, so the two chips at
+        // either end of the toolbar read as one family. The item sizes itself
+        // to the title, so no explicit min/max is needed.
+        item.title = status.title
+        item.style = .prominent
+        item.backgroundTintColor = status.color
+        item.toolTip = "Response status \(status.title)"
     }
 
     /// A glass capsule wrapping `content`.
