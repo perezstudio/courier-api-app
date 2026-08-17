@@ -139,33 +139,4 @@ final class ResponseController {
         try? libraryController.runs.setStarred(isStarred, forRun: runID)
         onHistoryChange?()
     }
-
-    /// Variable context for the active workspace.
-    ///
-    /// Environments arrive in Phase 6; until then only collection-scope
-    /// variables exist, so most placeholders resolve to nothing and are
-    /// reported as unresolved — which is accurate, not a bug.
-    func makeVariableContext() -> VariableResolver.Context {
-        guard let workspaceID = libraryController.activeWorkspaceID else {
-            return VariableResolver.Context()
-        }
-
-        var environmentValues: [String: String] = [:]
-        if let workspace = libraryController.workspaces.first(where: { $0.id == workspaceID }),
-           let activeEnvironmentID = workspace.activeEnvironmentID,
-           let environments = try? libraryController.environments.environments(
-               forWorkspace: workspaceID
-           ),
-           let environment = environments.first(where: { $0.id == activeEnvironmentID }) {
-            for variable in environment.variables where variable.isEnabled {
-                environmentValues[variable.key] = variable.isSecret
-                    ? ((try? libraryController.environments.value(for: variable.id)) ?? "")
-                    : variable.value
-            }
-        }
-
-        return VariableResolver.Context.build([
-            (.environment, environmentValues),
-        ])
-    }
 }

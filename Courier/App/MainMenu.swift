@@ -92,6 +92,13 @@ enum MainMenu {
 
         menu.addItem(.separator())
         menu.addItem(
+            withTitle: "Environments…",
+            action: #selector(MainWindowController.showEnvironments(_:)),
+            keyEquivalent: "e"
+        )
+
+        menu.addItem(.separator())
+        menu.addItem(
             withTitle: "Close Tab",
             action: #selector(NSWindow.performClose(_:)),
             keyEquivalent: "w"

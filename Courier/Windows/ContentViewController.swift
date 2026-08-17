@@ -18,6 +18,7 @@ final class ContentViewController: NSViewController {
     private let emptyState: EmptyStateView
 
     private var requestID: UUID?
+    private var libraryObservation: ObservationToken?
 
     init(libraryController: LibraryController, secretStore: SecretStore) {
         self.libraryController = libraryController
@@ -119,8 +120,21 @@ final class ContentViewController: NSViewController {
             self?.sendRequest()
         }
 
+        sections.variableContextProvider = { [weak self] in
+            self?.libraryController.makeVariableContext() ?? VariableResolver.Context()
+        }
+        sections.secretVariableNamesProvider = { [weak self] in
+            self?.secretVariableNames() ?? []
+        }
+
         editorController.onChange = { [weak self] in
-            self?.sections.refreshDerived()
+            self?.refreshVariableState()
+        }
+
+        // Changing the active environment has to re-resolve everything, and it
+        // happens outside this controller.
+        libraryObservation = libraryController.observe { [weak self] in
+            self?.refreshVariableState()
         }
 
         responseController.onStateChange = { [weak self] state in
@@ -136,6 +150,33 @@ final class ContentViewController: NSViewController {
         history.onToggleStar = { [weak self] runID, isStarred in
             self?.responseController.setStarred(isStarred, runID: runID)
         }
+    }
+
+    /// Re-resolves variables and tints unresolved ones in the URL bar.
+    private func refreshVariableState() {
+        sections.refreshDerived()
+        urlBar.setUnresolvedVariables(sections.unresolvedNames())
+    }
+
+    /// Names whose winning binding is a secret, so the Variables tab can mask
+    /// them rather than printing a token on screen.
+    private func secretVariableNames() -> Set<String> {
+        var names: Set<String> = []
+        for environment in libraryController.environmentsForActiveWorkspace()
+        where environment.id == libraryController.activeEnvironmentID {
+            for variable in environment.variables where variable.isSecret && variable.isEnabled {
+                names.insert(variable.key)
+            }
+        }
+        if let workspaceID = libraryController.activeWorkspaceID,
+           let collection = try? libraryController.environments.collectionVariables(
+               forWorkspace: workspaceID
+           ) {
+            for variable in collection where variable.isSecret && variable.isEnabled {
+                names.insert(variable.key)
+            }
+        }
+        return names
     }
 
     private func applyResponseState(_ state: ResponseController.State) {
@@ -189,6 +230,7 @@ final class ContentViewController: NSViewController {
             sections.reload()
         }
         reloadHistory()
+        refreshVariableState()
         updateVisibility()
     }
 
@@ -237,7 +279,7 @@ final class ContentViewController: NSViewController {
         responseController.send(
             input: input,
             requestID: requestID,
-            context: responseController.makeVariableContext()
+            context: libraryController.makeVariableContext()
         )
     }
 }

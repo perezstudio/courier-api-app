@@ -85,27 +85,62 @@ final class RequestSectionsTabViewController: NSTabViewController {
             formRows: formRows
         )
         authEditor.configure(editorController.auth, secret: editorController.currentAuthSecret())
-        variablesViewController.setNames(editorController.referencedVariableNames())
+        refreshDerived()
     }
 
     /// Refreshes only what an edit elsewhere can invalidate, without disturbing
     /// a field the user is typing in.
     func refreshDerived() {
-        variablesViewController.setNames(editorController.referencedVariableNames())
+        variablesViewController.setEntries(resolvedEntries())
     }
+
+    /// Which variables the request references, and what each resolves to right
+    /// now. Uses the same context a send would, so the preview cannot drift
+    /// from what actually goes out.
+    func resolvedEntries() -> [VariablesViewController.Entry] {
+        let context = variableContextProvider?() ?? VariableResolver.Context()
+        let secretNames = secretVariableNamesProvider?() ?? []
+
+        return editorController.referencedVariableNames().map { name in
+            let binding = context.binding(for: name)
+            return VariablesViewController.Entry(
+                name: name,
+                value: binding?.value,
+                scope: binding?.scope,
+                isSecret: secretNames.contains(name)
+            )
+        }
+    }
+
+    /// Unresolved names, for the URL bar's warning tint.
+    func unresolvedNames() -> Set<String> {
+        Set(resolvedEntries().filter { !$0.isResolved }.map(\.name))
+    }
+
+    /// Supplied by the owner so this controller does not reach into the
+    /// library itself.
+    var variableContextProvider: (() -> VariableResolver.Context)?
+    var secretVariableNamesProvider: (() -> Set<String>)?
 
     func refreshParams() {
         paramsTable.setRows(editorController.queryParams)
     }
 }
 
-/// Variables referenced by the request.
-///
-/// Phase 6 adds resolution — which environment supplies each value and what it
-/// resolves to. For now it lists what the request references, which is already
-/// enough to spot a typo in a placeholder name.
+/// Variables referenced by the request, with what each resolves to and from
+/// which scope.
 @MainActor
 final class VariablesViewController: NSViewController {
+
+    struct Entry {
+        let name: String
+        let value: String?
+        let scope: VariableResolver.Scope?
+        /// Secret values are shown as a placeholder, never in the clear.
+        let isSecret: Bool
+
+        var isResolved: Bool { value != nil }
+    }
 
     private let tableView = NSTableView()
     private let scrollView = NSScrollView()
@@ -115,7 +150,7 @@ final class VariablesViewController: NSViewController {
         subtitle: "Reference one with {{name}} in the URL, headers, or body."
     )
 
-    private var names: [String] = []
+    private var entries: [Entry] = []
 
     override func loadView() {
         view = NSView()
@@ -137,6 +172,11 @@ final class VariablesViewController: NSViewController {
         let valueColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("value"))
         valueColumn.title = "Resolves To"
         tableView.addTableColumn(valueColumn)
+
+        let scopeColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("scope"))
+        scopeColumn.title = "Scope"
+        scopeColumn.width = 100
+        tableView.addTableColumn(scopeColumn)
 
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
@@ -160,18 +200,18 @@ final class VariablesViewController: NSViewController {
         ])
     }
 
-    func setNames(_ names: [String]) {
-        self.names = names
+    func setEntries(_ entries: [Entry]) {
+        self.entries = entries
         tableView.reloadData()
-        emptyState.isHidden = !names.isEmpty
-        scrollView.isHidden = names.isEmpty
+        emptyState.isHidden = !entries.isEmpty
+        scrollView.isHidden = entries.isEmpty
     }
 }
 
 extension VariablesViewController: NSTableViewDataSource, NSTableViewDelegate {
 
     func numberOfRows(in tableView: NSTableView) -> Int {
-        names.count
+        entries.count
     }
 
     func tableView(
@@ -179,18 +219,46 @@ extension VariablesViewController: NSTableViewDataSource, NSTableViewDelegate {
         viewFor tableColumn: NSTableColumn?,
         row: Int
     ) -> NSView? {
-        guard let tableColumn, names.indices.contains(row) else { return nil }
+        guard let tableColumn, entries.indices.contains(row) else { return nil }
+        let entry = entries[row]
 
-        if tableColumn.identifier.rawValue == "name" {
-            let field = NSTextField(labelWithString: "{{\(names[row])}}")
+        switch tableColumn.identifier.rawValue {
+        case "name":
+            let field = NSTextField(labelWithString: "{{\(entry.name)}}")
             field.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-            field.textColor = .systemPurple
+            // Same colors as the URL bar: purple resolves, orange doesn't.
+            field.textColor = entry.isResolved ? .systemPurple : .systemOrange
             return field
-        }
 
-        let field = NSTextField(labelWithString: "Not resolved yet")
-        field.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        field.textColor = .tertiaryLabelColor
-        return field
+        case "value":
+            let text: String
+            let color: NSColor
+            if entry.isSecret {
+                text = "••••••••"
+                color = .secondaryLabelColor
+            } else if let value = entry.value {
+                text = value.isEmpty ? "(empty)" : value
+                color = value.isEmpty ? .tertiaryLabelColor : .labelColor
+            } else {
+                text = "Unresolved"
+                color = .systemOrange
+            }
+            let field = NSTextField(labelWithString: text)
+            field.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+            field.textColor = color
+            field.lineBreakMode = .byTruncatingTail
+            field.isSelectable = !entry.isSecret
+            field.toolTip = entry.isSecret ? "Stored in your Keychain" : entry.value
+            return field
+
+        case "scope":
+            let field = NSTextField(labelWithString: entry.scope?.displayName ?? "—")
+            field.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+            field.textColor = .secondaryLabelColor
+            return field
+
+        default:
+            return nil
+        }
     }
 }

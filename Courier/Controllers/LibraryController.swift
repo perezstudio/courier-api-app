@@ -215,6 +215,67 @@ final class LibraryController {
         return snapshot
     }
 
+    // MARK: - Environments
+
+    /// Environments for the active workspace.
+    func environmentsForActiveWorkspace() -> [EnvironmentSnapshot] {
+        guard let activeWorkspaceID else { return [] }
+        return (try? environments.environments(forWorkspace: activeWorkspaceID)) ?? []
+    }
+
+    var activeEnvironmentID: UUID? {
+        activeWorkspace?.activeEnvironmentID
+    }
+
+    var activeEnvironmentName: String? {
+        guard let activeEnvironmentID else { return nil }
+        return environmentsForActiveWorkspace()
+            .first { $0.id == activeEnvironmentID }?
+            .name
+    }
+
+    func setActiveEnvironment(_ environmentID: UUID?) {
+        guard let activeWorkspaceID else { return }
+        try? library.setActiveEnvironment(environmentID, forWorkspace: activeWorkspaceID)
+        reloadTree()
+    }
+
+    /// Builds the resolution context for the active workspace.
+    ///
+    /// Lives here rather than on the sender because the Variables tab has to
+    /// show exactly what a send would use — two implementations would drift and
+    /// the preview would start lying.
+    func makeVariableContext() -> VariableResolver.Context {
+        guard let activeWorkspaceID else { return VariableResolver.Context() }
+
+        var environmentValues: [String: String] = [:]
+        if let activeEnvironmentID,
+           let environment = environmentsForActiveWorkspace()
+               .first(where: { $0.id == activeEnvironmentID }) {
+            for variable in environment.variables where variable.isEnabled {
+                environmentValues[variable.key] = resolvedValue(of: variable)
+            }
+        }
+
+        var collectionValues: [String: String] = [:]
+        if let variables = try? environments.collectionVariables(forWorkspace: activeWorkspaceID) {
+            for variable in variables where variable.isEnabled {
+                collectionValues[variable.key] = resolvedValue(of: variable)
+            }
+        }
+
+        return VariableResolver.Context.build([
+            (.environment, environmentValues),
+            (.collection, collectionValues),
+        ])
+    }
+
+    /// Secret values come from the Keychain, never from the snapshot.
+    private func resolvedValue(of variable: VariableSnapshot) -> String {
+        guard variable.isSecret else { return variable.value }
+        return (try? environments.value(for: variable.id)) ?? ""
+    }
+
     /// Looks up a request summary anywhere in the current tree.
     func requestSummary(for id: UUID) -> RequestSummary? {
         func find(_ nodes: [TreeNode]) -> RequestSummary? {

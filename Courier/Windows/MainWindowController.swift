@@ -9,6 +9,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     private let rootSplit: RootSplitViewController
     private var toolbarDelegate: MainToolbarDelegate?
+    private var environmentWindowController: EnvironmentWindowController?
+    private var libraryObservation: ObservationToken?
 
     /// The request shown in this tab. Selection is per-window; everything else
     /// about the tree is shared via `LibraryController` (REQUIREMENTS.md §7.2).
@@ -38,6 +40,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         configureWindow(window)
         configureToolbar(window)
         updateTitles()
+
+        libraryObservation = libraryController.observe { [weak self] in
+            self?.refreshEnvironmentPicker()
+        }
+        refreshEnvironmentPicker()
     }
 
     @available(*, unavailable)
@@ -69,7 +76,11 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
         let delegate = MainToolbarDelegate(
             splitView: rootSplit.splitView,
             onNewRequest: { [weak self] in self?.rootSplit.createRequestAtSelection() },
-            onFilterChange: { [weak self] text in self?.applyFilter(text) }
+            onFilterChange: { [weak self] text in self?.applyFilter(text) },
+            onEnvironmentChange: { [weak self] id in
+                self?.libraryController.setActiveEnvironment(id)
+            },
+            onEditEnvironments: { [weak self] in self?.showEnvironments(nil) }
         )
         self.toolbarDelegate = delegate
 
@@ -136,6 +147,22 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSMenuIt
 
     @objc func toggleResponsePaneAction(_ sender: Any?) {
         rootSplit.toggleResponsePane()
+    }
+
+    @objc func showEnvironments(_ sender: Any?) {
+        guard let window else { return }
+        let controller = EnvironmentWindowController(libraryController: libraryController)
+        environmentWindowController = controller
+        controller.present(in: window)
+    }
+
+    /// Repopulates the toolbar picker from shared state. Every window does
+    /// this, so switching environments in one tab shows in all of them.
+    private func refreshEnvironmentPicker() {
+        toolbarDelegate?.updateEnvironments(
+            libraryController.environmentsForActiveWorkspace(),
+            activeID: libraryController.activeEnvironmentID
+        )
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {

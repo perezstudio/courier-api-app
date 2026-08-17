@@ -64,6 +64,51 @@ final class EnvironmentRepository {
         try context.save()
     }
 
+    // MARK: - Collection-scope variables
+
+    /// Workspace-wide variables — the collection scope, one rung below the
+    /// active environment.
+    func collectionVariables(forWorkspace workspaceID: UUID) throws -> [VariableSnapshot] {
+        let request = CDVariable.fetchRequest()
+        request.predicate = NSPredicate(
+            format: "workspace.id == %@ AND environment == nil",
+            workspaceID as CVarArg
+        )
+        request.sortDescriptors = [NSSortDescriptor(key: "sortOrder", ascending: true)]
+        return try context.fetch(request).map(Self.snapshot(of:))
+    }
+
+    @discardableResult
+    func addCollectionVariable(
+        key: String,
+        value: String,
+        isSecret: Bool,
+        toWorkspace workspaceID: UUID
+    ) throws -> VariableSnapshot {
+        let workspaceRequest = CDWorkspace.fetchRequest()
+        workspaceRequest.predicate = NSPredicate(format: "id == %@", workspaceID as CVarArg)
+        workspaceRequest.fetchLimit = 1
+        guard let workspace = try context.fetch(workspaceRequest).first else {
+            throw LibraryRepository.RepositoryError.notFound
+        }
+
+        let sortOrder = try collectionVariables(forWorkspace: workspaceID).count
+
+        let variable = CDVariable(context: context)
+        variable.key = key
+        variable.isSecret = isSecret
+        variable.workspace = workspace
+        variable.sortOrder = Int32(sortOrder)
+        variable.value = isSecret ? "" : value
+
+        if isSecret {
+            try secretStore.set(value, for: variable.id)
+        }
+
+        try context.save()
+        return Self.snapshot(of: variable)
+    }
+
     // MARK: - Variables
 
     @discardableResult
